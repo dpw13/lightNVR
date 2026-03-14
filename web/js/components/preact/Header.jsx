@@ -263,7 +263,7 @@ export function Header({ version = VERSION }) {
   }, [AUTO_LOCALE, setLocalePreference, t]);
 
   // Render navigation item
-  const renderNavItem = (item) => {
+  const renderNavItem = (item, mobile = false) => {
     const isActive = activeNav === item.id;
     const baseClasses = "no-underline rounded transition-colors cursor-pointer border-0 font-medium " + (item.baseClasses || "");
     const desktopClasses = "px-3 py-2";
@@ -271,12 +271,12 @@ export function Header({ version = VERSION }) {
     const activeClass = isActive ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'text-[hsl(var(--card-foreground))] hover:bg-[hsl(var(--primary)/0.8)] hover:text-[hsl(var(--primary-foreground))]';
 
     return (
-        <li className={mobileMenuOpen ? "w-full" : item.classNameLi ? item.classNameLi : "mx-1"}>
+        <li className={mobile ? "w-full" : item.classNameLi ? item.classNameLi : "mx-1"}>
           <a
               href={item.href && item.href}
               id={item.id}
               title={item.title}
-              className={`${baseClasses} ${mobileMenuOpen ? mobileClasses : desktopClasses} ${activeClass}`}
+              className={`${baseClasses} ${mobile ? mobileClasses : desktopClasses} ${activeClass}`}
               disabled={item.disabled}
               onClick={(e) => {
                 // Force navigation and prevent default behavior
@@ -310,7 +310,7 @@ export function Header({ version = VERSION }) {
       label: displayUsername,
       classNameLi: 'ml-3',
       baseClasses: mobile ? 'text-left' : '',
-    });
+    }, mobile);
   };
 
   const renderLoginLogout = (login = false, mobile = false) => {
@@ -320,7 +320,7 @@ export function Header({ version = VERSION }) {
       label: login ? t('auth.login') : t('auth.logout'),
       classNameLi: 'ml-2',
       baseClasses: (mobile ? 'text-right ' : '') + (login ? 'login-link' : 'logout-link'),
-    });
+    }, mobile);
   };
 
   const renderLanguageSelector = (mobile = false) => (
@@ -358,7 +358,7 @@ export function Header({ version = VERSION }) {
           {/* Desktop Navigation */}
           <nav className="hidden lg:block" style={{ position: 'relative', zIndex: 20 }}>
             <ul className="flex list-none m-0 p-0">
-              {navItems.map(renderNavItem)}
+              {navItems.map((navItem) => renderNavItem(navItem))}
             </ul>
           </nav>
 
@@ -394,7 +394,7 @@ export function Header({ version = VERSION }) {
             <div className="xl:hidden mt-2 border-t pt-2 container mx-auto px-4" style={{borderColor: 'hsl(var(--border))'}}>
               <ul className="list-none m-0 p-0 flex flex-col w-full">
                 <li className="w-full">{renderLanguageSelector(true)}</li>
-                {navItems.map(renderNavItem)}
+                {navItems.map((navItem) => renderNavItem(navItem, true))}
                 {authEnabled && (
                   <li className="w-full mt-2 pt-2 border-t" style={{borderColor: 'hsl(var(--border))'}}>
                     <div className="flex justify-between items-center px-4 py-2">
