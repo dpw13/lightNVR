@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { showStatusMessage } from './ToastContainer.jsx';
-import { useFullscreenManager, FullscreenManager } from './FullscreenManager.jsx';
+import { useFullscreenManager, FullscreenManager, useFullscreenGridNav } from './FullscreenManager.jsx';
 import { useQuery, useQueryClient } from '../../query-client.js';
 import { SnapshotManager, useSnapshotManager } from './SnapshotManager.jsx';
 import { HLSVideoCell } from './HLSVideoCell.jsx';
@@ -465,6 +465,9 @@ export function LiveView({isWebRTCDisabled}) {
     console.log(`[LiveView] cols=${cols}, rows=${rows}, currentPage=${currentPage}, totalStreams=${orderedStreams.length}`);
     return result;
   }, [orderedStreams, isSingleStream, selectedStream, currentPage, maxStreams, cols, rows]);
+
+  // Arrow-key navigation between streams while one is in native fullscreen.
+  useFullscreenGridNav(streamsToShow, cols, rows);
 
   return (
     <section

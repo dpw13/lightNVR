@@ -2,7 +2,100 @@
  * Fullscreen functionality for LiveView
  * React component for managing fullscreen mode
  */
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { tinykeys } from 'tinykeys';
+
+/**
+ * Navigate to an adjacent stream in the native fullscreen grid.
+ * Finds the currently fullscreen .video-cell, locates its grid position, then
+ * steps in the requested direction (with wrap-around), skipping empty cells.
+ *
+ * @param {'ArrowLeft'|'ArrowRight'|'ArrowUp'|'ArrowDown'} direction
+ * @param {Array}  streamsToShow - streams visible in the current page
+ * @param {number} cols          - grid column count
+ * @param {number} rows          - grid row count
+ */
+function navigateFullscreenGrid(direction, streamsToShow, cols, rows) {
+  const fullscreenEl = document.fullscreenElement;
+  if (!fullscreenEl) return;
+
+  // The fullscreen element is the .video-cell div (data-stream-name is on it)
+  const streamName = fullscreenEl.dataset.streamName;
+  if (!streamName) return;
+
+  const currentIndex = streamsToShow.findIndex(s => s.name === streamName);
+  if (currentIndex === -1) return;
+
+  let nextRow = Math.floor(currentIndex / cols);
+  let nextCol = currentIndex % cols;
+
+  // Walk one step at a time in the requested direction, wrapping around, until
+  // we land on a populated cell (or exhaust all possibilities).
+  const maxAttempts = cols * rows;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (direction === 'ArrowRight') {
+      nextCol = (nextCol + 1) % cols;
+    } else if (direction === 'ArrowLeft') {
+      nextCol = (nextCol - 1 + cols) % cols;
+    } else if (direction === 'ArrowDown') {
+      nextRow = (nextRow + 1) % rows;
+    } else if (direction === 'ArrowUp') {
+      nextRow = (nextRow - 1 + rows) % rows;
+    }
+
+    const nextIndex = nextRow * cols + nextCol;
+    if (nextIndex < streamsToShow.length) {
+      const nextStream = streamsToShow[nextIndex];
+      // Query the DOM for the cell; it remains in the DOM even while another
+      // element is in fullscreen mode.
+      const nextCell = document.querySelector(
+        `[data-stream-name="${CSS.escape(nextStream.name)}"].video-cell`
+      );
+      if (nextCell && nextCell !== fullscreenEl) {
+        nextCell.requestFullscreen().catch(err => {
+          console.warn(`Grid nav fullscreen switch failed: ${err.message}`);
+        });
+      }
+      return;
+    }
+  }
+}
+
+/**
+ * Hook: bind arrow keys for grid navigation while a stream is in native
+ * fullscreen.  Refs keep streamsToShow/cols/rows fresh without re-subscribing
+ * tinykeys on every render.
+ *
+ * @param {Array}  streamsToShow
+ * @param {number} cols
+ * @param {number} rows
+ */
+export function useFullscreenGridNav(streamsToShow, cols, rows) {
+  const streamsRef = useRef(streamsToShow);
+  const colsRef    = useRef(cols);
+  const rowsRef    = useRef(rows);
+
+  useEffect(() => { streamsRef.current = streamsToShow; }, [streamsToShow]);
+  useEffect(() => { colsRef.current = cols; },            [cols]);
+  useEffect(() => { rowsRef.current = rows; },            [rows]);
+
+  useEffect(() => {
+    const guard = (dir) => (e) => {
+      if (!document.fullscreenElement) return;
+      e.preventDefault();
+      navigateFullscreenGrid(dir, streamsRef.current, colsRef.current, rowsRef.current);
+    };
+
+    const unsub = tinykeys(window, {
+      ArrowLeft:  guard('ArrowLeft'),
+      ArrowRight: guard('ArrowRight'),
+      ArrowUp:    guard('ArrowUp'),
+      ArrowDown:  guard('ArrowDown'),
+    });
+
+    return unsub; // tinykeys returns the cleanup function directly
+  }, []); // empty deps: refs keep values current
+}
 
 /**
  * Custom hook for fullscreen functionality
@@ -107,29 +200,27 @@ export function FullscreenButton({ isFullscreen, onToggle }) {
  * @returns {JSX.Element} FullscreenManager component
  */
 export function FullscreenManager({ isFullscreen, setIsFullscreen, targetId = 'live-page' }) {
-  // Handle escape key
+  // Handle escape key (via tinykeys) and apply/remove fullscreen CSS
   useEffect(() => {
     if (!isFullscreen) return;
 
-    const handleEscapeKey = (e) => {
-      if (e.key === 'Escape') {
-        console.log("Escape key pressed in fullscreen mode");
-        setIsFullscreen(false);
-      }
-    };
-
-    document.addEventListener('keydown', handleEscapeKey);
-
-    // Apply fullscreen styles to the target element
     const targetElement = document.getElementById(targetId);
     if (targetElement) {
       targetElement.classList.add('fullscreen-mode');
       document.body.style.overflow = 'hidden';
     }
 
+    const unsub = tinykeys(window, {
+      Escape: (e) => {
+        console.log("Escape key pressed in fullscreen mode");
+        e.preventDefault();
+        setIsFullscreen(false);
+      },
+    });
+
     return () => {
-      document.removeEventListener('keydown', handleEscapeKey);
-      
+      unsub();
+
       // Remove fullscreen styles when component unmounts or fullscreen is exited
       if (targetElement) {
         targetElement.classList.remove('fullscreen-mode');
