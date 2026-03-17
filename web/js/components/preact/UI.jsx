@@ -327,6 +327,7 @@ export function VideoModal({ isOpen, onClose, videoUrl, title, downloadUrl }) {
       // Reset video element when modal opens
       if (videoRef.current) {
         videoRef.current.load();
+        videoRef.current.ondblclick = () => handleToggleFullscreen();
       }
     }
 

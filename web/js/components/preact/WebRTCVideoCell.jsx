@@ -442,6 +442,8 @@ export function WebRTCVideoCell({
           }
         };
 
+        videoElement.ondblclick = (e) => onToggleFullscreen(stream.name, e, cellRef.current);
+
         // Start initial playback attempt
         attemptPlay();
       } else if (event.track.kind === 'audio') {

@@ -253,6 +253,7 @@ export function TimelinePage() {
   const processedDataRef = useRef(null);  // Track last processed timeline data
   const selectedDateRef = useRef(urlParams.date);
   const videoElementRef = useRef(null);
+  const pointerDownTimerRef = useRef(null);
 
   useEffect(() => {
     selectedDateRef.current = selectedDate;
@@ -378,9 +379,23 @@ export function TimelinePage() {
       setKeyboardNavigationMode((prevMode) => prevMode === nextMode ? prevMode : nextMode);
     };
 
-    document.addEventListener('pointerdown', handlePointerDown, true);
+    // separate clicks from double clicks
+    // (don't change keyboard navigation mode when double clicking)
+    const watchPointerDown = (event) => {
+      if (pointerDownTimerRef.current) {
+        clearTimeout(pointerDownTimerRef.current);
+        pointerDownTimerRef.current = null;
+        return;
+      }
+      pointerDownTimerRef.current = setTimeout(() => {
+        pointerDownTimerRef.current = null;
+        handlePointerDown(event);
+      }, 200)
+    };
+
+    document.addEventListener('pointerdown', watchPointerDown, true);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('pointerdown', watchPointerDown, true);
     };
   }, []);
 

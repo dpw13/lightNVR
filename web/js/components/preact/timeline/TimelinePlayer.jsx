@@ -51,6 +51,9 @@ export function TimelinePlayer({ videoElementRef = null, autoFullscreen = false 
 
   const setVideoRefs = useCallback((node) => {
     videoRef.current = node;
+    if (videoRef.current) {
+      videoRef.current.ondblclick = () => handleToggleFullscreen();
+    }
 
     if (!videoElementRef) {
       return;

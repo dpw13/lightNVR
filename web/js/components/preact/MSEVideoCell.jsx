@@ -147,6 +147,8 @@ export function MSEVideoCell({
         videoRef.current.srcObject = null;
       }
 
+      videoRef.current.ondblclick = (e) => onToggleFullscreen(stream.name, e, cellRef.current);
+
       // Start playback
       videoRef.current.play().catch(() => {
         if (videoRef.current && !videoRef.current.muted) {

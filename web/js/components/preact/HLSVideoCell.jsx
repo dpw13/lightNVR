@@ -254,6 +254,8 @@ export function HLSVideoCell({
         hls.loadSource(hlsStreamUrl);
         hls.attachMedia(videoRef.current);
 
+        videoRef.current.ondblclick = (e) => onToggleFullscreen(stream.name, e, cellRef.current);
+
         hls.on(Hls.Events.MANIFEST_PARSED, function() {
           if (!isMounted) return;
           if (!recoveringRef.current) {
@@ -373,6 +375,8 @@ export function HLSVideoCell({
         console.log(`Using native HLS support for stream ${stream.name}`);
         // Native HLS support (Safari)
         videoRef.current.src = hlsStreamUrl;
+
+        videoRef.current.ondblclick = (e) => onToggleFullscreen(stream.name, e, cellRef.current);
 
         // Store handlers for cleanup
         nativeLoadedHandler = function() {
