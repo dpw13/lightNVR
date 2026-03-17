@@ -978,6 +978,7 @@ static void *unified_detection_thread_func(void *arg) {
     strncpy(stream_name, ctx->stream_name, sizeof(stream_name) - 1);
     stream_name[sizeof(stream_name) - 1] = '\0';
 
+    log_set_thread_context("Detection", stream_name);
     log_info("[%s] Unified detection thread started", stream_name);
 
     unified_detection_state_t state;

@@ -760,6 +760,7 @@ static bool restart_go2rtc_process(void) {
 static void *unified_health_monitor_thread(void *arg) {
     (void)arg;
 
+    log_set_thread_context("go2rtc", NULL);
     log_info("Unified go2rtc health monitor thread started");
 
     bool process_restarted = false;

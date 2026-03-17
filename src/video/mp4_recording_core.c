@@ -108,6 +108,7 @@ static void *mp4_recording_thread(void *arg) {
     strncpy(stream_name, ctx->config.name, MAX_STREAM_NAME - 1);
     stream_name[MAX_STREAM_NAME - 1] = '\0';
 
+    log_set_thread_context("MP4Recorder", stream_name);
     log_info("Starting MP4 recording thread for stream %s", stream_name);
 
     // Check if we're still running (might have been stopped during initialization)

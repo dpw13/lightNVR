@@ -121,6 +121,7 @@ static void *mp4_writer_rtsp_thread(void *arg) {
         strncpy(stream_name, "unknown", MAX_STREAM_NAME - 1);
     }
 
+    log_set_thread_context("MP4Writer", stream_name);
     log_info("Starting RTSP reading thread for stream %s", stream_name);
 
     // Defer DB creation until the first keyframe is seen so start_time aligns to a playable frame.

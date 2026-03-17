@@ -116,6 +116,7 @@ bool is_recording_scheduled(const stream_config_t *config) {
  */
 static void *schedule_monitor_func(void *arg) {
     (void)arg;
+    log_set_thread_context("StreamScheduler", NULL);
     log_info("Recording schedule monitor thread started");
 
     while (schedule_monitor_running) {

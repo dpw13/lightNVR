@@ -861,6 +861,7 @@ void mqtt_set_motion_state(const char *stream_name, const detection_result_t *re
  */
 static void *ha_snapshot_thread_func(void *arg) {
     (void)arg;
+    log_set_thread_context("MQTT", NULL);
     log_info("MQTT HA: Snapshot publishing thread started (interval=%ds)",
              mqtt_config->mqtt_ha_snapshot_interval);
 
@@ -912,6 +913,7 @@ static void *ha_snapshot_thread_func(void *arg) {
  */
 static void *ha_motion_thread_func(void *arg) {
     (void)arg;
+    log_set_thread_context("MQTT", NULL);
     log_info("MQTT HA: Motion timeout thread started");
 
     while (ha_services_running) {
@@ -1049,6 +1051,7 @@ typedef struct {
  * Thread function to run blocking mosquitto operations with timeout capability
  */
 static void *mqtt_cleanup_thread(void *arg) {
+    log_set_thread_context("MQTT", NULL);
     mqtt_cleanup_arg_t *cleanup_arg = (mqtt_cleanup_arg_t *)arg;
     volatile int *done_flag = cleanup_arg->done_flag;
 

@@ -145,4 +145,49 @@ int is_syslog_enabled(void);
  */
 int is_logger_available(void);
 
+/* -----------------------------------------------------------------------
+ * Per-thread logging context
+ *
+ * Each long-running thread may call log_set_thread_context() once at
+ * startup so that every subsequent log_* call from that thread
+ * automatically includes a [component] and, when applicable, a
+ * [stream_name] field in the log line:
+ *
+ *   [timestamp] [LEVEL] [component] [stream] message
+ *   [timestamp] [LEVEL] [component] message        <- no stream set
+ *   [timestamp] [LEVEL] message                    <- no context set
+ *
+ * The implementation uses __thread storage; no mutex is required.
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Set the logging context for the current thread.
+ *
+ * @param component   Short label for the subsystem, e.g. "MP4Writer"
+ *                    (max 63 chars, copied into thread-local storage).
+ *                    Pass NULL or "" to clear.
+ * @param stream_name Name of the stream this thread is handling, e.g.
+ *                    "front_door" (max 127 chars, copied).
+ *                    Pass NULL or "" when the thread is not stream-specific.
+ */
+void log_set_thread_context(const char *component, const char *stream_name);
+
+/**
+ * Clear the logging context for the current thread.
+ * After this call log_* calls from the thread omit the context prefix.
+ */
+void log_clear_thread_context(void);
+
+/**
+ * Return the component label stored for the current thread.
+ * Returns "" when no context has been set.
+ */
+const char *log_get_thread_component(void);
+
+/**
+ * Return the stream name stored for the current thread.
+ * Returns "" when no stream context has been set.
+ */
+const char *log_get_thread_stream(void);
+
 #endif // LIGHTNVR_LOGGER_H

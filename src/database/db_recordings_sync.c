@@ -207,6 +207,7 @@ static int sync_recordings_needing_size_update(void) {
  * Sync thread function
  */
 static void *sync_thread_func(void *arg) {
+    log_set_thread_context("RecordingSync", NULL);
     log_info("Recording sync thread started with interval: %d seconds (syncing recordings since %ld)",
             sync_thread.interval_seconds, (long)sync_thread.startup_time);
 

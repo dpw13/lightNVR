@@ -963,6 +963,7 @@ static void deep_maintenance_cycle(void) {
  */
 static void* unified_storage_controller_func(void *arg) {
     (void)arg;
+    log_set_thread_context("StorageManager", NULL);
     log_info("Unified storage controller started");
     log_info("  Heartbeat interval: %d seconds", HEARTBEAT_INTERVAL_SEC);
     log_info("  Standard cleanup interval: %d seconds", STANDARD_INTERVAL_SEC);

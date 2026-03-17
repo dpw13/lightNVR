@@ -41,6 +41,29 @@ static struct {
 extern __attribute__((weak)) int init_json_logger(const char *filename);
 extern __attribute__((weak)) int write_json_log(log_level_t level, const char *timestamp, const char *message);
 
+// -----------------------------------------------------------------------
+// Per-thread logging context (thread-local storage)
+// Each worker thread calls log_set_thread_context() once at startup.
+// log_message_v() reads these to prepend [component] [stream] to lines.
+// -----------------------------------------------------------------------
+static __thread char tls_log_component[64]  = {0};
+static __thread char tls_log_stream[128]    = {0};
+
+void log_set_thread_context(const char *component, const char *stream_name) {
+    strncpy(tls_log_component, component    ? component    : "", sizeof(tls_log_component) - 1);
+    tls_log_component[sizeof(tls_log_component) - 1] = '\0';
+    strncpy(tls_log_stream,    stream_name ? stream_name : "", sizeof(tls_log_stream) - 1);
+    tls_log_stream[sizeof(tls_log_stream) - 1] = '\0';
+}
+
+void log_clear_thread_context(void) {
+    tls_log_component[0] = '\0';
+    tls_log_stream[0]    = '\0';
+}
+
+const char *log_get_thread_component(void) { return tls_log_component; }
+const char *log_get_thread_stream(void)    { return tls_log_stream;    }
+
 // Log level strings
 static const char *log_level_strings[] = {
     "ERROR",
@@ -353,8 +376,17 @@ void log_message_v(log_level_t level, const char *format, va_list args) {
         tm_info = localtime_r(&now, &tm_buf);
         strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
 
+        char shutdown_prefix[224] = {0};
+        if (tls_log_component[0] != '\0') {
+            if (tls_log_stream[0] != '\0') {
+                snprintf(shutdown_prefix, sizeof(shutdown_prefix), "[%s] [%s] ",
+                         tls_log_component, tls_log_stream);
+            } else {
+                snprintf(shutdown_prefix, sizeof(shutdown_prefix), "[%s] ", tls_log_component);
+            }
+        }
         FILE *console = (level == LOG_LEVEL_ERROR) ? stderr : stdout;
-        fprintf(console, "[%s] [%s] %s\n", timestamp, log_level_strings[level], message);
+        fprintf(console, "[%s] [%s] %s%s\n", timestamp, log_level_strings[level], shutdown_prefix, message);
         fflush(console);
         return;
     }
@@ -387,10 +419,23 @@ void log_message_v(log_level_t level, const char *format, va_list args) {
     vsnprintf(message, sizeof(message), format, args_copy); // NOLINT(clang-analyzer-valist.Uninitialized)
     va_end(args_copy);
 
+    // Build optional [component] [stream] prefix from per-thread context.
+    // If the thread has not called log_set_thread_context() both strings are
+    // empty and ctx_prefix is "" (no prefix — fully backward compatible).
+    char ctx_prefix[224] = {0};
+    if (tls_log_component[0] != '\0') {
+        if (tls_log_stream[0] != '\0') {
+            snprintf(ctx_prefix, sizeof(ctx_prefix), "[%s] [%s] ",
+                     tls_log_component, tls_log_stream);
+        } else {
+            snprintf(ctx_prefix, sizeof(ctx_prefix), "[%s] ", tls_log_component);
+        }
+    }
+
     // Double-check shutdown flag before acquiring mutex
     if (logger.shutdown) {
         FILE *console = (level == LOG_LEVEL_ERROR) ? stderr : stdout;
-        fprintf(console, "[%s] [%s] %s\n", timestamp, log_level_strings[level], message);
+        fprintf(console, "[%s] [%s] %s%s\n", timestamp, log_level_strings[level], ctx_prefix, message);
         fflush(console);
         return;
     }
@@ -399,14 +444,14 @@ void log_message_v(log_level_t level, const char *format, va_list args) {
 
     // Write to log file if available
     if (logger.log_file && logger.log_file != stdout && logger.log_file != stderr) {
-        fprintf(logger.log_file, "[%s] [%s] %s\n", timestamp, log_level_strings[level], message);
+        fprintf(logger.log_file, "[%s] [%s] %s%s\n", timestamp, log_level_strings[level], ctx_prefix, message);
         fflush(logger.log_file);
     }
 
     // Always write to console (tee behavior)
     // Use stderr for errors, stdout for other levels
     FILE *console = (level == LOG_LEVEL_ERROR) ? stderr : stdout;
-    fprintf(console, "[%s] [%s] %s\n", timestamp, log_level_strings[level], message);
+    fprintf(console, "[%s] [%s] %s%s\n", timestamp, log_level_strings[level], ctx_prefix, message);
     fflush(console);
 
     // Write to syslog if enabled

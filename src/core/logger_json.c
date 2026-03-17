@@ -180,9 +180,20 @@ int write_json_log(log_level_t level, const char *timestamp, const char *message
         return -1;
     }
     
-    // Add timestamp, level, and message
+    // Add timestamp, level, optional context fields, and message.
+    // Component and stream are read from per-thread storage (log_get_thread_*);
+    // they are only added to the JSON object when non-empty so that log
+    // entries from threads without context remain unchanged.
     cJSON_AddStringToObject(log_entry, "timestamp", timestamp);
     cJSON_AddStringToObject(log_entry, "level", json_log_level_strings[level]);
+    const char *component   = log_get_thread_component();
+    const char *stream_name = log_get_thread_stream();
+    if (component && component[0] != '\0') {
+        cJSON_AddStringToObject(log_entry, "component", component);
+    }
+    if (stream_name && stream_name[0] != '\0') {
+        cJSON_AddStringToObject(log_entry, "stream", stream_name);
+    }
     cJSON_AddStringToObject(log_entry, "message", message);
     
     // Convert to string

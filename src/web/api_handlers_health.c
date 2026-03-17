@@ -386,6 +386,7 @@ static bool restart_web_server(void) {
 static void *health_check_thread_func(void *arg) {
     (void)arg;
 
+    log_set_thread_context("HealthCheck", NULL);
     log_info("Health check thread started");
 
     while (g_health_thread_running) {

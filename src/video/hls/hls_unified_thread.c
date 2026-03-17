@@ -942,6 +942,7 @@ void *hls_unified_thread_func(void *arg) {
     strncpy(stream_name, ctx->stream_name, MAX_STREAM_NAME - 1);
     stream_name[MAX_STREAM_NAME - 1] = '\0';
 
+    log_set_thread_context("HLSWriter", stream_name);
     log_info("Starting unified HLS thread for stream %s", stream_name);
 
     // Check if we're still running before proceeding
@@ -3258,6 +3259,7 @@ static bool is_thread_running(hls_unified_thread_ctx_t *ctx) {
  * @return NULL
  */
 static void *hls_watchdog_thread_func(void *arg) {
+    log_set_thread_context("HLSWatchdog", NULL);
     log_info("HLS watchdog thread started");
 
     while (atomic_load(&watchdog_running)) {
