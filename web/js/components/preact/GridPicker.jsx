@@ -15,24 +15,16 @@ const DEFAULT_COLS = 6;
 const DEFAULT_ROWS = 6;
 
 /**
- * Return the best [cols, rows] to display N streams in a near-square grid.
+ * Return the best [cols, rows] to display N streams in a square grid.
+ * Always returns [s, s] where s = ceil(sqrt(n)), so the layout is never a
+ * landscape or portrait rectangle that would force a particular screen orientation.
  * @param {number} n
  * @returns {[number, number]}
  */
 export function computeOptimalGrid(n) {
-  if (n <= 1)  return [1, 1];
-  if (n <= 2)  return [2, 1];
-  if (n <= 4)  return [2, 2];
-  if (n <= 6)  return [3, 2];
-  if (n <= 9)  return [3, 3];
-  if (n <= 12) return [4, 3];
-  if (n <= 16) return [4, 4];
-  if (n <= 20) return [5, 4];
-  if (n <= 24) return [6, 4];
-  if (n <= 28) return [7, 4];
-  if (n <= 32) return [8, 4];
-  // 33-36 and beyond: 9×4 = 36 per page (pagination handles the rest)
-  return [9, 4];
+  if (n <= 1) return [1, 1];
+  const s = Math.ceil(Math.sqrt(n));
+  return [s, s];
 }
 
 /**
@@ -52,11 +44,12 @@ export function GridPicker({ cols, rows, onSelect, maxCells }) {
   const [open, setOpen]   = useState(false);
   const containerRef      = useRef(null);
 
-  // Scale the picker grid to fit the stream count, capped at MAX_GRID_CELLS.
-  // e.g. 6 streams → 3×2, 20 → 5×4, 32+ → 6×6 (cells beyond 32 are greyed out)
+  // Scale the picker grid to fit the stream count, always as a square.
+  // e.g. 3 streams → 2×2, 5 → 3×3, 9 → 3×3, 10 → 4×4
   const effectiveMax = Math.min(maxCells > 0 ? maxCells : DEFAULT_COLS * DEFAULT_ROWS, MAX_GRID_CELLS);
-  const gridCols = Math.max(2, Math.ceil(Math.sqrt(effectiveMax)));
-  const gridRows = Math.max(2, Math.ceil(effectiveMax / gridCols));
+  const gridSide = Math.max(2, Math.ceil(Math.sqrt(effectiveMax)));
+  const gridCols = gridSide;
+  const gridRows = gridSide;
 
   // Keep hover in sync when external selection changes (e.g. auto-grid on load)
   useEffect(() => { setHover({ c: cols, r: rows }); }, [cols, rows]);
