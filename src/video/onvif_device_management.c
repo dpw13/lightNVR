@@ -353,7 +353,7 @@ int get_onvif_device_profiles(const char *device_url, const char *username,
     char *media_url = get_media_service_url(device_url, username, password);
     if (!media_url) {
         log_error("Couldn't get media service URL");
-        return 0;
+        return -1;
     }
     
     char safe_device_url[MAX_URL_LENGTH];
@@ -371,7 +371,7 @@ int get_onvif_device_profiles(const char *device_url, const char *username,
     if (!response) {
         log_error("Failed to get profiles");
         free(media_url);
-        return 0;
+        return -1;
     }
     
     // Parse the XML response
@@ -380,7 +380,7 @@ int get_onvif_device_profiles(const char *device_url, const char *username,
         log_error("Failed to parse XML response");
         free(response);
         free(media_url);
-        return 0;
+        return -1;
     }
     
     // Find all profiles
@@ -397,14 +397,6 @@ int get_onvif_device_profiles(const char *device_url, const char *username,
                 profile = profile->next;
             }
         }
-    }
-    
-    if (profile_count == 0) {
-        log_error("No profiles found");
-        ezxml_free(xml);
-        free(response);
-        free(media_url);
-        return 0;
     }
     
     log_info("Found %d profiles, returning up to %d", profile_count, max_profiles);
@@ -694,9 +686,15 @@ int test_onvif_connection(const char *url, const char *username, const char *pas
     onvif_profile_t profiles[1];
     int count = get_onvif_device_profiles(url, username, password, profiles, 1);
     
-    if (count <= 0) {
+    if (count < 0) {
         log_error("Failed to connect to ONVIF device: %s", safe_device_url);
         return -1;
+    }
+
+    if (count == 0) {
+        // TODO: consider this success for now since we were able to query the device.
+        log_warn("Connected to ONVIF device %s but device has no profiles", safe_device_url);
+        return 0;
     }
     
     log_info("Successfully connected to ONVIF device: %s", safe_device_url);
