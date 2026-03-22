@@ -944,18 +944,30 @@ export function TimelinePage() {
         if (!response.ok) return;
         const data = await response.json();
         const polledSegments = data.segments || [];
-        if (polledSegments.length === 0) return;
 
         const currentSegs = timelineState.timelineSegments || [];
         const currentIds = new Set(currentSegs.map(s => String(s.id)));
+        const polledIds = new Set(polledSegments.map(s => String(s.id)));
         const addedSegs = polledSegments.filter(s => !currentIds.has(String(s.id)));
+        const removedSegs = currentSegs.filter(s => !polledIds.has(String(s.id)));
+
+        if (addedSegs.length === 0 && removedSegs.length === 0) return;
+
+        // Use polled segments as the authoritative list
+        const updated = [...polledSegments].sort((a, b) => a.start_timestamp - b.start_timestamp);
+        setSegments(updated);
+        timelineState.setState({ timelineSegments: updated });
 
         if (addedSegs.length > 0) {
-          const merged = [...currentSegs, ...addedSegs].sort((a, b) => a.start_timestamp - b.start_timestamp);
-          setSegments(merged);
-          timelineState.setState({ timelineSegments: merged });
           showStatusMessage(
             `${addedSegs.length} new recording${addedSegs.length !== 1 ? 's' : ''} added to timeline`,
+            'info',
+            3000
+          );
+        }
+        if (removedSegs.length > 0) {
+          showStatusMessage(
+            `${removedSegs.length} recording${removedSegs.length !== 1 ? 's' : ''} removed from timeline`,
             'info',
             3000
           );
