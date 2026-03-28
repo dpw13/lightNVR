@@ -34,6 +34,7 @@ static struct {
 } sync_thread = {
     .running = false,
     .interval_seconds = 60, // Default to 1 minute
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
     .startup_time = 0,
 };
 
@@ -239,16 +240,6 @@ static void *sync_thread_func(void *arg) {
  * Start the recording sync thread
  */
 int start_recording_sync_thread(int interval_seconds) {
-    // Initialize mutex if not already initialized
-    static bool mutex_initialized = false;
-    if (!mutex_initialized) {
-        if (pthread_mutex_init(&sync_thread.mutex, NULL) != 0) {
-            log_error("Failed to initialize recording sync thread mutex");
-            return -1;
-        }
-        mutex_initialized = true;
-    }
-
     pthread_mutex_lock(&sync_thread.mutex);
 
     // Check if thread is already running
