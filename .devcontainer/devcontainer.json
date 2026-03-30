@@ -3,13 +3,18 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "settings": {
-    "terminal.integrated.shell.linux": "/bin/bash"
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+      },
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
   },
-  "extensions": [
-    "ms-vscode.cpptools",
-    "dbaeumer.vscode-eslint"
-  ],
   "forwardPorts": [],
   "postCreateCommand": "npm install",
   "remoteUser": "root"

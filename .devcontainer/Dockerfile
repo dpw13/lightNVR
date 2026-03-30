@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM debian:stable-slim
 
 # Avoid interactive prompts during package install
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y curl ca-certificates gnupg \
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
+    git \
     build-essential \
     cmake \
     libsqlite3-dev \
@@ -25,8 +26,10 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libuv1-dev \
     libllhttp-dev \
+    libmosquitto-dev \
     file \
     systemd \
+    ffmpeg \
     && apt-get clean
 
 # Create a non-root user for VS Code
