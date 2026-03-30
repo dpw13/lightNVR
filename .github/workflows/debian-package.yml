@@ -24,7 +24,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
             deb_arch: arm64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-latest
             platform: linux/arm/v7
             deb_arch: armhf
 
@@ -118,10 +118,37 @@ jobs:
               ln -sf libsqlite3.so.0 libsqlite3.so 2>/dev/null || true)
           fi
 
-          # Web assets, migrations, config
-          docker cp "${CID}:/var/lib/lightnvr/www/."              "${PKG_DIR}/var/lib/lightnvr/www/"
-          docker cp "${CID}:/usr/share/lightnvr/migrations/."     "${PKG_DIR}/usr/share/lightnvr/migrations/"
-          docker cp "${CID}:/etc/lightnvr/."                      "${PKG_DIR}/etc/lightnvr/"
+          # Web assets and migrations from the Docker image
+          docker cp "${CID}:/var/lib/lightnvr/www/."          "${PKG_DIR}/var/lib/lightnvr/www/"
+          docker cp "${CID}:/usr/share/lightnvr/migrations/." "${PKG_DIR}/usr/share/lightnvr/migrations/"
+
+          # Config files: use the checked-out repo source so they are
+          # guaranteed to exist in the package (the runtime Docker image
+          # does not include them; they are only created in the builder
+          # stage and NOT copied into the runtime stage).
+          install -m 644 config/lightnvr.ini "${PKG_DIR}/etc/lightnvr/lightnvr.ini"
+
+          # Default go2rtc config (mirrors what the Dockerfile builder creates)
+          cat > "${PKG_DIR}/etc/lightnvr/go2rtc/go2rtc.yaml" << 'GO2RTC_EOF'
+          # go2rtc configuration file
+          # See https://github.com/AlexxIT/go2rtc for documentation
+
+          api:
+            listen: :1984
+            origin: "*"
+
+          webrtc:
+            ice_servers:
+              - urls: [stun:stun.l.google.com:19302]
+
+          log:
+            level: info
+
+          streams:
+            # Streams will be added dynamically by LightNVR
+          GO2RTC_EOF
+          # Strip 10-space YAML indent from the go2rtc config
+          sed -i 's/^          //' "${PKG_DIR}/etc/lightnvr/go2rtc/go2rtc.yaml"
 
           # ── ldconfig drop-in ────────────────────────────────────────────────
           echo "/usr/lib/lightnvr" > "${PKG_DIR}/etc/ld.so.conf.d/lightnvr.conf"
