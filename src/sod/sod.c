@@ -2128,7 +2128,7 @@ typedef enum {
 typedef struct tree tree;
 typedef struct network network;
 typedef struct network_state network_state;
-typedef struct layer layer;
+typedef struct layer layer_t;
 typedef enum {
 	CONSTANT, STEP, EXP, POLY, STEPS, SIG, RANDOM
 } learning_rate_policy;
@@ -2160,7 +2160,7 @@ struct network {
 	int subdivisions;
 	float momentum;
 	float decay;
-	layer *layers;
+	layer_t *layers;
 	int outputs;
 	float *output;
 	learning_rate_policy policy;
@@ -2213,12 +2213,12 @@ struct layer {
 	SOD_CNN_LAYER_TYPE type;
 	ACTIVATION activation;
 	COST_TYPE cost_type;
-	void(*forward)   (struct layer, struct network_state);
-	void(*backward)  (struct layer, struct network_state);
-	void(*update)    (struct layer, int, float, float, float);
-	void(*forward_gpu)   (struct layer, struct network_state);
-	void(*backward_gpu)  (struct layer, struct network_state);
-	void(*update_gpu)    (struct layer, int, float, float, float);
+	void(*forward)   (layer_t, struct network_state);
+	void(*backward)  (layer_t, struct network_state);
+	void(*update)    (layer_t, int, float, float, float);
+	void(*forward_gpu)   (layer_t, struct network_state);
+	void(*backward_gpu)  (layer_t, struct network_state);
+	void(*update_gpu)    (layer_t, int, float, float, float);
 	int batch_normalize;
 	int shortcut;
 	int batch;
@@ -2346,25 +2346,25 @@ struct layer {
 
 	float * binary_input;
 
-	struct layer *input_layer;
-	struct layer *self_layer;
-	struct layer *output_layer;
+	layer_t *input_layer;
+	layer_t *self_layer;
+	layer_t *output_layer;
 
-	struct layer *input_gate_layer;
-	struct layer *state_gate_layer;
-	struct layer *input_save_layer;
-	struct layer *state_save_layer;
-	struct layer *input_state_layer;
-	struct layer *state_state_layer;
+	layer_t *input_gate_layer;
+	layer_t *state_gate_layer;
+	layer_t *input_save_layer;
+	layer_t *state_save_layer;
+	layer_t *input_state_layer;
+	layer_t *state_state_layer;
 
-	struct layer *input_z_layer;
-	struct layer *state_z_layer;
+	layer_t *input_z_layer;
+	layer_t *state_z_layer;
 
-	struct layer *input_r_layer;
-	struct layer *state_r_layer;
+	layer_t *input_r_layer;
+	layer_t *state_r_layer;
 
-	struct layer *input_h_layer;
-	struct layer *state_h_layer;
+	layer_t *input_h_layer;
+	layer_t *state_h_layer;
 
 	tree *softmax_tree;
 
@@ -2461,7 +2461,7 @@ struct sod_cnn {
 	int ow;
 	int oh;
 	network net; /* The network  */
-	layer det;  /* Detection layer */
+	layer_t det;  /* Detection layer */
 	box *boxes;
 	float **probs;
 	float *pOut;      /* Prediction output */
@@ -3639,7 +3639,7 @@ static void make_network(int n, network *out)
 	network net;
 	memset(&net, 0, sizeof(network));
 	net.n = n;
-	net.layers = calloc(net.n, sizeof(layer));
+	net.layers = calloc(net.n, sizeof(layer_t));
 	net.seen = calloc(1, sizeof(uint64_t));
 #if 0 /* SOD_GPU */
 	net.input_gpu = calloc(1, sizeof(float *));
@@ -3647,7 +3647,7 @@ static void make_network(int n, network *out)
 #endif
 	*out = net;
 }
-static void free_layer(layer *l, layer *p)
+static void free_layer(layer_t *l, layer_t *p)
 {
 	if (l->type == DROPOUT) {
 		if (l->rand)           free(l->rand);
@@ -3860,7 +3860,7 @@ static void free_network(network *net)
 {
 	int i;
 	for (i = 0; i < net->n; ++i) {
-		layer *l = &net->layers[i];
+		layer_t *l = &net->layers[i];
 		if (l->input_layer) {
 			free_layer(l->input_layer, l);
 			free(l->input_layer);
@@ -3927,7 +3927,7 @@ static void free_network(network *net)
 static void forward_network(network *net, network_state state)
 {
 	int i = 0;
-	layer l;
+	layer_t l;
 	state.workspace = net->workspace;
 	for (;;) {
 		if (i >= net->n) break;
@@ -3975,11 +3975,11 @@ static void backward_network(network *net, network_state state)
 			state.delta = original_delta;
 		}
 		else {
-			layer prev = net->layers[i - 1];
+			layer_t prev = net->layers[i - 1];
 			state.input = prev.output;
 			state.delta = prev.delta;
 		}
-		layer l = net->layers[i];
+		layer_t l = net->layers[i];
 		l.backward(l, state);
 	}
 }
@@ -4028,7 +4028,7 @@ static void transpose_matrix(float *a, int rows, int cols)
 	memcpy(a, transpose, rows*cols * sizeof(float));
 	free(transpose);
 }
-static void load_convolutional_weights(layer l, FILE *fp)
+static void load_convolutional_weights(layer_t l, FILE *fp)
 {
 	int num = l.n*l.c*l.size*l.size;
 	fread(l.biases, sizeof(float), l.n, fp);
@@ -4051,7 +4051,7 @@ static void load_convolutional_weights(layer l, FILE *fp)
 	}
 #endif
 }
-static void load_connected_weights(layer l, FILE *fp, int transpose)
+static void load_connected_weights(layer_t l, FILE *fp, int transpose)
 {
 	fread(l.biases, sizeof(float), l.outputs, fp);
 	fread(l.weights, sizeof(float), l.outputs*l.inputs, fp);
@@ -4069,7 +4069,7 @@ static void load_connected_weights(layer l, FILE *fp, int transpose)
 	}
 #endif
 }
-static void load_batchnorm_weights(layer l, FILE *fp)
+static void load_batchnorm_weights(layer_t l, FILE *fp)
 {
 	fread(l.scales, sizeof(float), l.c, fp);
 	fread(l.rolling_mean, sizeof(float), l.c, fp);
@@ -4112,7 +4112,7 @@ static int load_weights_upto(network *net, const char *filename, int cutoff)
 	}
 	transpose = (major > 1000) || (minor > 1000);
 	for (i = 0; i < net->n && i < cutoff; ++i) {
-		layer l = net->layers[i];
+		layer_t l = net->layers[i];
 		if (l.dontload) continue;
 		if (l.type == CONVOLUTIONAL /*|| l.type == DECONVOLUTIONAL*/) {
 			load_convolutional_weights(l, fp);
@@ -4535,7 +4535,7 @@ static int parse_net_options(list *options, network *net)
 	net->max_batches = option_find_int(options, "max_batches", 0);
 	return 0;
 }
-typedef layer convolutional_layer;
+typedef layer_t convolutional_layer;
 static ACTIVATION get_activation(char *s)
 {
 	if (strcmp(s, "logistic") == 0) return LOGISTIC;
@@ -4778,7 +4778,7 @@ static void scale_bias(float *output, float *scales, int batch, int n, int size)
 		}
 	}
 }
-static void forward_batchnorm_layer(layer l, network_state state)
+static void forward_batchnorm_layer(layer_t l, network_state state)
 {
 	if (l.type == BATCHNORM) copy_cpu(l.outputs*l.batch, state.input, 1, l.output, 1);
 	if (l.type == CONNECTED) {
@@ -5013,7 +5013,7 @@ static void normalize_delta_cpu(float *x, float *mean, float *variance, float *m
 		}
 	}
 }
-static void backward_batchnorm_layer(const layer l, network_state state)
+static void backward_batchnorm_layer(const layer_t l, network_state state)
 {
 	backward_scale_cpu(l.x_norm, l.delta, l.batch, l.out_c, l.out_w*l.out_h, l.scale_updates);
 
@@ -5076,7 +5076,7 @@ static void update_convolutional_layer(convolutional_layer l, int batch, float l
 	axpy_cpu(size, learning_rate / batch, l.weight_updates, 1, l.weights, 1);
 	scal_cpu(size, momentum, l.weight_updates, 1);
 }
-static size_t get_workspace_size(layer l) {
+static size_t get_workspace_size(layer_t l) {
 	return (size_t)l.out_h*l.out_w*l.size*l.size*l.c * sizeof(float);
 }
 static convolutional_layer make_convolutional_layer(int batch, int h, int w, int c, int n, int size, int stride, int padding, ACTIVATION activation, int batch_normalize, int binary, int xnor, int adam)
@@ -5252,7 +5252,7 @@ static int parse_convolutional(convolutional_layer *l, list *options, size_param
 	return SOD_OK;
 }
 /* =============================================================== LOCAL =============================================================== */
-typedef layer local_layer;
+typedef layer_t local_layer;
 
 static int local_out_height(local_layer l)
 {
@@ -5538,12 +5538,12 @@ static int parse_local(local_layer *l, list *options, size_params params, sod_cn
 	return SOD_OK;
 }
 /* =============================================================== Activation =============================================================== */
-static void forward_activation_layer(layer l, network_state state)
+static void forward_activation_layer(layer_t l, network_state state)
 {
 	copy_cpu(l.outputs*l.batch, state.input, 1, l.output, 1);
 	activate_array(l.output, l.outputs*l.batch, l.activation);
 }
-static void backward_activation_layer(layer l, network_state state)
+static void backward_activation_layer(layer_t l, network_state state)
 {
 	gradient_array(l.output, l.outputs*l.batch, l.activation, l.delta);
 	copy_cpu(l.outputs*l.batch, l.delta, 1, state.delta, 1);
@@ -5551,20 +5551,20 @@ static void backward_activation_layer(layer l, network_state state)
 
 #if 0 /* SOD_GPU */
 
-static void forward_activation_layer_gpu(layer l, network_state state)
+static void forward_activation_layer_gpu(layer_t l, network_state state)
 {
 	copy_ongpu(l.outputs*l.batch, state.input, 1, l.output_gpu, 1);
 	activate_array_ongpu(l.output_gpu, l.outputs*l.batch, l.activation);
 }
-static void backward_activation_layer_gpu(layer l, network_state state)
+static void backward_activation_layer_gpu(layer_t l, network_state state)
 {
 	gradient_array_ongpu(l.output_gpu, l.outputs*l.batch, l.activation, l.delta_gpu);
 	copy_ongpu(l.outputs*l.batch, l.delta_gpu, 1, state.delta, 1);
 }
 #endif
-static layer make_activation_layer(int batch, int inputs, ACTIVATION activation)
+static layer_t make_activation_layer(int batch, int inputs, ACTIVATION activation)
 {
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.type = ACTIVE;
 
 	l.inputs = inputs;
@@ -5586,7 +5586,7 @@ static layer make_activation_layer(int batch, int inputs, ACTIVATION activation)
 	l.activation = activation;
 	return l;
 }
-static int parse_activation(layer *la, list *options, size_params params)
+static int parse_activation(layer_t *la, list *options, size_params params)
 {
 	char *activation_s = option_find_str(options, "activation", "linear");
 	ACTIVATION activation = get_activation(activation_s);
@@ -5602,7 +5602,7 @@ static int parse_activation(layer *la, list *options, size_params params)
 	return SOD_OK;
 }
 /* ============================== Connected Layer ==============================*/
-typedef layer connected_layer;
+typedef layer_t connected_layer;
 static void update_connected_layer(connected_layer l, int batch, float learning_rate, float momentum, float decay)
 {
 	axpy_cpu(l.outputs, learning_rate / batch, l.bias_updates, 1, l.biases, 1);
@@ -5779,7 +5779,7 @@ static connected_layer make_connected_layer(int batch, int inputs, int outputs, 
 	return l;
 }
 /* =============================================================== RNN =============================================================== */
-static void increment_rnn_layer(layer *l, int steps)
+static void increment_rnn_layer(layer_t *l, int steps)
 {
 	int num = l->outputs*l->batch*steps;
 	l->output += num;
@@ -5794,20 +5794,20 @@ static void increment_rnn_layer(layer *l, int steps)
 	l->x_norm_gpu += num;
 #endif
 }
-static void update_rnn_layer(layer l, int batch, float learning_rate, float momentum, float decay)
+static void update_rnn_layer(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_connected_layer(*(l.input_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer(*(l.self_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer(*(l.output_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_rnn_layer(layer l, network_state state)
+static void forward_rnn_layer(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 
 	fill_cpu(l.outputs * l.batch * l.steps, 0, output_layer.delta, 1);
 	fill_cpu(l.hidden * l.batch * l.steps, 0, self_layer.delta, 1);
@@ -5841,14 +5841,14 @@ static void forward_rnn_layer(layer l, network_state state)
 		increment_rnn_layer(&output_layer, 1);
 	}
 }
-static void backward_rnn_layer(layer l, network_state state)
+static void backward_rnn_layer(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 
 	increment_rnn_layer(&input_layer, l.steps - 1);
 	increment_rnn_layer(&self_layer, l.steps - 1);
@@ -5892,32 +5892,32 @@ static void backward_rnn_layer(layer l, network_state state)
 }
 #if 0 /* SOD_GPU */
 
-static void pull_rnn_layer(layer l)
+static void pull_rnn_layer(layer_t l)
 {
 	pull_connected_layer(*(l.input_layer));
 	pull_connected_layer(*(l.self_layer));
 	pull_connected_layer(*(l.output_layer));
 }
-static void push_rnn_layer(layer l)
+static void push_rnn_layer(layer_t l)
 {
 	push_connected_layer(*(l.input_layer));
 	push_connected_layer(*(l.self_layer));
 	push_connected_layer(*(l.output_layer));
 }
-static void update_rnn_layer_gpu(layer l, int batch, float learning_rate, float momentum, float decay)
+static void update_rnn_layer_gpu(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_connected_layer_gpu(*(l.input_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer_gpu(*(l.self_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer_gpu(*(l.output_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_rnn_layer_gpu(layer l, network_state state)
+static void forward_rnn_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 
 	fill_ongpu(l.outputs * l.batch * l.steps, 0, output_layer.delta_gpu, 1);
 	fill_ongpu(l.hidden * l.batch * l.steps, 0, self_layer.delta_gpu, 1);
@@ -5951,14 +5951,14 @@ static void forward_rnn_layer_gpu(layer l, network_state state)
 		increment_layer(&output_layer, 1);
 	}
 }
-static void backward_rnn_layer_gpu(layer l, network_state state)
+static void backward_rnn_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 	increment_layer(&input_layer, l.steps - 1);
 	increment_layer(&self_layer, l.steps - 1);
 	increment_layer(&output_layer, l.steps - 1);
@@ -5991,10 +5991,10 @@ static void backward_rnn_layer_gpu(layer l, network_state state)
 	}
 }
 #endif
-static layer make_rnn_layer(int batch, int inputs, int hidden, int outputs, int steps, ACTIVATION activation, int batch_normalize, int log)
+static layer_t make_rnn_layer(int batch, int inputs, int hidden, int outputs, int steps, ACTIVATION activation, int batch_normalize, int log)
 {
 	batch = batch / steps;
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.batch = batch;
 	l.type = RNN;
 	l.steps = steps;
@@ -6003,17 +6003,17 @@ static layer make_rnn_layer(int batch, int inputs, int hidden, int outputs, int 
 
 	l.state = calloc(batch*hidden*(steps + 1), sizeof(float));
 
-	l.input_layer = malloc(sizeof(layer));
+	l.input_layer = malloc(sizeof(layer_t));
 
 	*(l.input_layer) = make_connected_layer(batch*steps, inputs, hidden, activation, batch_normalize);
 	l.input_layer->batch = batch;
 
-	l.self_layer = malloc(sizeof(layer));
+	l.self_layer = malloc(sizeof(layer_t));
 
 	*(l.self_layer) = make_connected_layer(batch*steps, hidden, hidden, (log == 2) ? LOGGY : (log == 1 ? LOGISTIC : activation), batch_normalize);
 	l.self_layer->batch = batch;
 
-	l.output_layer = malloc(sizeof(layer));
+	l.output_layer = malloc(sizeof(layer_t));
 
 	*(l.output_layer) = make_connected_layer(batch*steps, hidden, outputs, activation, batch_normalize);
 	l.output_layer->batch = batch;
@@ -6036,7 +6036,7 @@ static layer make_rnn_layer(int batch, int inputs, int hidden, int outputs, int 
 
 	return l;
 }
-static int parse_rnn(layer *rl, list *options, size_params params)
+static int parse_rnn(layer_t *rl, list *options, size_params params)
 {
 	int output = option_find_int(options, "output", 1);
 	int hidden = option_find_int(options, "hidden", 1);
@@ -6052,7 +6052,7 @@ static int parse_rnn(layer *rl, list *options, size_params params)
 	return SOD_OK;
 }
 /* =============================================================== GRU =============================================================== */
-static void increment_layer_gru(layer *l, int steps)
+static void increment_layer_gru(layer_t *l, int steps)
 {
 	int num = l->outputs*l->batch*steps;
 	l->output += num;
@@ -6067,24 +6067,24 @@ static void increment_layer_gru(layer *l, int steps)
 	l->x_norm_gpu += num;
 #endif
 }
-static void update_gru_layer(layer l, int batch, float learning_rate, float momentum, float decay)
+static void update_gru_layer(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_connected_layer(*(l.input_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer(*(l.self_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer(*(l.output_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_gru_layer(layer l, network_state state)
+static void forward_gru_layer(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_z_layer = *(l.input_z_layer);
-	layer input_r_layer = *(l.input_r_layer);
-	layer input_h_layer = *(l.input_h_layer);
+	layer_t input_z_layer = *(l.input_z_layer);
+	layer_t input_r_layer = *(l.input_r_layer);
+	layer_t input_h_layer = *(l.input_h_layer);
 
-	layer state_z_layer = *(l.state_z_layer);
-	layer state_r_layer = *(l.state_r_layer);
-	layer state_h_layer = *(l.state_h_layer);
+	layer_t state_z_layer = *(l.state_z_layer);
+	layer_t state_r_layer = *(l.state_r_layer);
+	layer_t state_h_layer = *(l.state_h_layer);
 
 	fill_cpu(l.outputs * l.batch * l.steps, 0, input_z_layer.delta, 1);
 	fill_cpu(l.outputs * l.batch * l.steps, 0, input_r_layer.delta, 1);
@@ -6148,13 +6148,13 @@ static void forward_gru_layer(layer l, network_state state)
 		increment_layer_gru(&state_h_layer, 1);
 	}
 }
-static void backward_gru_layer(layer l, network_state state) { (void)l; (void)state; /* shut up the compiler */ }
+static void backward_gru_layer(layer_t l, network_state state) { (void)l; (void)state; /* shut up the compiler */ }
 
 #if 0 /* SOD_GPU */
 
-static void pull_gru_layer(layer l) {}
-static void push_gru_layer(layer l) {}
-static void update_gru_layer_gpu(layer l, int batch, float learning_rate, float momentum, float decay)
+static void pull_gru_layer(layer_t l) {}
+static void push_gru_layer(layer_t l) {}
+static void update_gru_layer_gpu(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_connected_layer_gpu(*(l.input_r_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer_gpu(*(l.input_z_layer), batch, learning_rate, momentum, decay);
@@ -6163,18 +6163,18 @@ static void update_gru_layer_gpu(layer l, int batch, float learning_rate, float 
 	update_connected_layer_gpu(*(l.state_z_layer), batch, learning_rate, momentum, decay);
 	update_connected_layer_gpu(*(l.state_h_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_gru_layer_gpu(layer l, network_state state)
+static void forward_gru_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_z_layer = *(l.input_z_layer);
-	layer input_r_layer = *(l.input_r_layer);
-	layer input_h_layer = *(l.input_h_layer);
+	layer_t input_z_layer = *(l.input_z_layer);
+	layer_t input_r_layer = *(l.input_r_layer);
+	layer_t input_h_layer = *(l.input_h_layer);
 
-	layer state_z_layer = *(l.state_z_layer);
-	layer state_r_layer = *(l.state_r_layer);
-	layer state_h_layer = *(l.state_h_layer);
+	layer_t state_z_layer = *(l.state_z_layer);
+	layer_t state_r_layer = *(l.state_r_layer);
+	layer_t state_h_layer = *(l.state_h_layer);
 
 	fill_ongpu(l.outputs * l.batch * l.steps, 0, input_z_layer.delta_gpu, 1);
 	fill_ongpu(l.outputs * l.batch * l.steps, 0, input_r_layer.delta_gpu, 1);
@@ -6238,18 +6238,18 @@ static void forward_gru_layer_gpu(layer l, network_state state)
 		increment_layer_gru(&state_h_layer, 1);
 	}
 }
-static void backward_gru_layer_gpu(layer l, network_state state)
+static void backward_gru_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_z_layer = *(l.input_z_layer);
-	layer input_r_layer = *(l.input_r_layer);
-	layer input_h_layer = *(l.input_h_layer);
+	layer_t input_z_layer = *(l.input_z_layer);
+	layer_t input_r_layer = *(l.input_r_layer);
+	layer_t input_h_layer = *(l.input_h_layer);
 
-	layer state_z_layer = *(l.state_z_layer);
-	layer state_r_layer = *(l.state_r_layer);
-	layer state_h_layer = *(l.state_h_layer);
+	layer_t state_z_layer = *(l.state_z_layer);
+	layer_t state_r_layer = *(l.state_r_layer);
+	layer_t state_h_layer = *(l.state_h_layer);
 
 	increment_layer_gru(&input_z_layer, l.steps - 1);
 	increment_layer_gru(&input_r_layer, l.steps - 1);
@@ -6340,40 +6340,40 @@ static void backward_gru_layer_gpu(layer l, network_state state)
 	}
 }
 #endif
-static layer make_gru_layer(int batch, int inputs, int outputs, int steps, int batch_normalize)
+static layer_t make_gru_layer(int batch, int inputs, int outputs, int steps, int batch_normalize)
 {
 	batch = batch / steps;
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.batch = batch;
 	l.type = GRU;
 	l.steps = steps;
 	l.inputs = inputs;
 
-	l.input_z_layer = malloc(sizeof(layer));
+	l.input_z_layer = malloc(sizeof(layer_t));
 
 	*(l.input_z_layer) = make_connected_layer(batch*steps, inputs, outputs, LINEAR, batch_normalize);
 	l.input_z_layer->batch = batch;
 
-	l.state_z_layer = malloc(sizeof(layer));
+	l.state_z_layer = malloc(sizeof(layer_t));
 
 	*(l.state_z_layer) = make_connected_layer(batch*steps, outputs, outputs, LINEAR, batch_normalize);
 	l.state_z_layer->batch = batch;
 
-	l.input_r_layer = malloc(sizeof(layer));
+	l.input_r_layer = malloc(sizeof(layer_t));
 
 	*(l.input_r_layer) = make_connected_layer(batch*steps, inputs, outputs, LINEAR, batch_normalize);
 	l.input_r_layer->batch = batch;
 
-	l.state_r_layer = malloc(sizeof(layer));
+	l.state_r_layer = malloc(sizeof(layer_t));
 	*(l.state_r_layer) = make_connected_layer(batch*steps, outputs, outputs, LINEAR, batch_normalize);
 	l.state_r_layer->batch = batch;
 
-	l.input_h_layer = malloc(sizeof(layer));
+	l.input_h_layer = malloc(sizeof(layer_t));
 
 	*(l.input_h_layer) = make_connected_layer(batch*steps, inputs, outputs, LINEAR, batch_normalize);
 	l.input_h_layer->batch = batch;
 
-	l.state_h_layer = malloc(sizeof(layer));
+	l.state_h_layer = malloc(sizeof(layer_t));
 
 	*(l.state_h_layer) = make_connected_layer(batch*steps, outputs, outputs, LINEAR, batch_normalize);
 	l.state_h_layer->batch = batch;
@@ -6414,7 +6414,7 @@ static layer make_gru_layer(int batch, int inputs, int outputs, int steps, int b
 
 	return l;
 }
-static int parse_gru(layer *l, list *options, size_params params)
+static int parse_gru(layer_t *l, list *options, size_params params)
 {
 	int output = option_find_int(options, "output", 1);
 	int batch_normalize = option_find_int(options, "batch_normalize", 0);
@@ -6422,7 +6422,7 @@ static int parse_gru(layer *l, list *options, size_params params)
 	return SOD_OK;
 }
 /* =============================================================== CRNN =============================================================== */
-static void increment_layer_crnn(layer *l, int steps)
+static void increment_layer_crnn(layer_t *l, int steps)
 {
 	int num = l->outputs*l->batch*steps;
 	l->output += num;
@@ -6437,19 +6437,19 @@ static void increment_layer_crnn(layer *l, int steps)
 	l->x_norm_gpu += num;
 #endif
 }
-static void update_crnn_layer(layer l, int batch, float learning_rate, float momentum, float decay)
+static void update_crnn_layer(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_convolutional_layer(*(l.input_layer), batch, learning_rate, momentum, decay);
 	update_convolutional_layer(*(l.self_layer), batch, learning_rate, momentum, decay);
 	update_convolutional_layer(*(l.output_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_crnn_layer(layer l, network_state state)
+static void forward_crnn_layer(layer_t l, network_state state)
 {
 	int i;
 	network_state s = { 0 };
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 	s.train = state.train;
 	fill_cpu(l.outputs * l.batch * l.steps, 0, output_layer.delta, 1);
 	fill_cpu(l.hidden * l.batch * l.steps, 0, self_layer.delta, 1);
@@ -6484,14 +6484,14 @@ static void forward_crnn_layer(layer l, network_state state)
 		increment_layer_crnn(&output_layer, 1);
 	}
 }
-static void backward_crnn_layer(layer l, network_state state)
+static void backward_crnn_layer(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 	s.train = state.train;
 	increment_layer_crnn(&input_layer, l.steps - 1);
 	increment_layer_crnn(&self_layer, l.steps - 1);
@@ -6536,32 +6536,32 @@ static void backward_crnn_layer(layer l, network_state state)
 
 #if 0 /* SOD_GPU */
 
-static void pull_crnn_layer(layer l)
+static void pull_crnn_layer(layer_t l)
 {
 	pull_convolutional_layer(*(l.input_layer));
 	pull_convolutional_layer(*(l.self_layer));
 	pull_convolutional_layer(*(l.output_layer));
 }
-static void push_crnn_layer(layer l)
+static void push_crnn_layer(layer_t l)
 {
 	push_convolutional_layer(*(l.input_layer));
 	push_convolutional_layer(*(l.self_layer));
 	push_convolutional_layer(*(l.output_layer));
 }
-static void update_crnn_layer_gpu(layer l, int batch, float learning_rate, float momentum, float decay)
+static void update_crnn_layer_gpu(layer_t l, int batch, float learning_rate, float momentum, float decay)
 {
 	update_convolutional_layer_gpu(*(l.input_layer), batch, learning_rate, momentum, decay);
 	update_convolutional_layer_gpu(*(l.self_layer), batch, learning_rate, momentum, decay);
 	update_convolutional_layer_gpu(*(l.output_layer), batch, learning_rate, momentum, decay);
 }
-static void forward_crnn_layer_gpu(layer l, network_state state)
+static void forward_crnn_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 
 	fill_ongpu(l.outputs * l.batch * l.steps, 0, output_layer.delta_gpu, 1);
 	fill_ongpu(l.hidden * l.batch * l.steps, 0, self_layer.delta_gpu, 1);
@@ -6595,14 +6595,14 @@ static void forward_crnn_layer_gpu(layer l, network_state state)
 		increment_layer_crnn(&output_layer, 1);
 	}
 }
-static void backward_crnn_layer_gpu(layer l, network_state state)
+static void backward_crnn_layer_gpu(layer_t l, network_state state)
 {
 	network_state s = { 0 };
 	s.train = state.train;
 	int i;
-	layer input_layer = *(l.input_layer);
-	layer self_layer = *(l.self_layer);
-	layer output_layer = *(l.output_layer);
+	layer_t input_layer = *(l.input_layer);
+	layer_t self_layer = *(l.self_layer);
+	layer_t output_layer = *(l.output_layer);
 	increment_layer(&input_layer, l.steps - 1);
 	increment_layer(&self_layer, l.steps - 1);
 	increment_layer(&output_layer, l.steps - 1);
@@ -6635,9 +6635,9 @@ static void backward_crnn_layer_gpu(layer l, network_state state)
 	}
 }
 #endif
-static layer make_crnn_layer(int batch, int h, int w, int c, int hidden_filters, int output_filters, int steps, ACTIVATION activation, int batch_normalize)
+static layer_t make_crnn_layer(int batch, int h, int w, int c, int hidden_filters, int output_filters, int steps, ACTIVATION activation, int batch_normalize)
 {
-	layer l = { 0 };
+	layer_t l = { 0 };
 	batch = batch / steps;
 	l.batch = batch;
 	l.type = CRNN;
@@ -6654,16 +6654,16 @@ static layer make_crnn_layer(int batch, int h, int w, int c, int hidden_filters,
 
 	l.state = calloc(l.hidden*batch*(steps + 1), sizeof(float));
 
-	l.input_layer = malloc(sizeof(layer));
+	l.input_layer = malloc(sizeof(layer_t));
 
 	*(l.input_layer) = make_convolutional_layer(batch*steps, h, w, c, hidden_filters, 3, 1, 1, activation, batch_normalize, 0, 0, 0);
 	l.input_layer->batch = batch;
 
-	l.self_layer = malloc(sizeof(layer));
+	l.self_layer = malloc(sizeof(layer_t));
 	*(l.self_layer) = make_convolutional_layer(batch*steps, h, w, hidden_filters, hidden_filters, 3, 1, 1, activation, batch_normalize, 0, 0, 0);
 	l.self_layer->batch = batch;
 
-	l.output_layer = malloc(sizeof(layer));
+	l.output_layer = malloc(sizeof(layer_t));
 	*(l.output_layer) = make_convolutional_layer(batch*steps, h, w, hidden_filters, output_filters, 3, 1, 1, activation, batch_normalize, 0, 0, 0);
 	l.output_layer->batch = batch;
 
@@ -6686,7 +6686,7 @@ static layer make_crnn_layer(int batch, int h, int w, int c, int hidden_filters,
 
 	return l;
 }
-static int parse_crnn(layer *l, list *options, size_params params)
+static int parse_crnn(layer_t *l, list *options, size_params params)
 {
 	int output_filters = option_find_int(options, "output_filters", 1);
 	int hidden_filters = option_find_int(options, "hidden_filters", 1);
@@ -6709,7 +6709,7 @@ static int parse_connected(connected_layer *l, list *options, size_params params
 	return SOD_OK;
 }
 /* =============================================================== CROP =============================================================== */
-typedef layer crop_layer;
+typedef layer_t crop_layer;
 static void forward_crop_layer(const crop_layer l, network_state state)
 {
 	int i, j, c, b, row, col;
@@ -6803,7 +6803,7 @@ static int parse_crop(crop_layer *l, list *options, size_params params, sod_cnn 
 	return SOD_OK;
 }
 /* =============================================================== COST =============================================================== */
-typedef layer cost_layer;
+typedef layer_t cost_layer;
 #define SECRET_NUM -1234
 static COST_TYPE get_cost_type(char *s)
 {
@@ -6919,7 +6919,7 @@ static int parse_cost(cost_layer *l, list *options, size_params params)
 	return SOD_OK;
 }
 /* ================================================ Softmax =============================== */
-typedef layer softmax_layer;
+typedef layer_t softmax_layer;
 static void softmax_tree(float *input, int batch, int inputs, float temp, tree *hierarchy, float *output)
 {
 	int b;
@@ -7223,7 +7223,7 @@ static int hierarchy_top_prediction(float *predictions, tree *hier, float thresh
 	}
 	return 0;
 }
-static void get_region_boxes(layer l, int w, int h, float thresh, float **probs, box *boxes, int only_objectness, int *map, float tree_thresh)
+static void get_region_boxes(layer_t l, int w, int h, float thresh, float **probs, box *boxes, int only_objectness, int *map, float tree_thresh)
 {
 	int i, j, n;
 	float *predictions = l.output;
@@ -7268,7 +7268,7 @@ static void get_region_boxes(layer l, int w, int h, float thresh, float **probs,
 		}
 	}
 }
-static void forward_region_layer(const layer l, network_state state)
+static void forward_region_layer(const layer_t l, network_state state)
 {
 	int i, j, b, t, n;
 	int size = l.coords + l.classes + 1;
@@ -7425,13 +7425,13 @@ static void forward_region_layer(const layer l, network_state state)
 #endif
 	*(l.cost) = pow(mag_array(l.delta, l.outputs * l.batch), 2);
 }
-static void backward_region_layer(const layer l, network_state state)
+static void backward_region_layer(const layer_t l, network_state state)
 {
 	axpy_cpu(l.batch*l.inputs, 1, l.delta, 1, state.delta, 1);
 }
-static layer make_region_layer(int batch, int w, int h, int n, int classes, int coords)
+static layer_t make_region_layer(int batch, int w, int h, int n, int classes, int coords)
 {
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.type = REGION;
 
 	l.n = n;
@@ -7491,7 +7491,7 @@ static int *read_map(char *filename)
 }
 /* Forward declaration */
 static tree *read_tree(char *filename);
-static int parse_region(layer *l, list *options, size_params params)
+static int parse_region(layer_t *l, list *options, size_params params)
 {
 	int coords = option_find_int(options, "coords", 4);
 	int classes = option_find_int(options, "classes", 20);
@@ -7542,7 +7542,7 @@ static int parse_region(layer *l, list *options, size_params params)
 	return SOD_OK;
 }
 /* =============================================================== Detection  =============================================================== */
-typedef layer detection_layer;
+typedef layer_t detection_layer;
 
 static void forward_detection_layer(const detection_layer l, network_state state)
 {
@@ -7730,7 +7730,7 @@ static void backward_detection_layer_gpu(detection_layer l, network_state state)
 	/*copy_ongpu(l.batch*l.inputs, l.delta_gpu, 1, state.delta, 1);*/
 }
 #endif
-static void get_detection_boxes(layer l, int w, int h, float thresh, float **probs, box *boxes, int only_objectness)
+static void get_detection_boxes(layer_t l, int w, int h, float thresh, float **probs, box *boxes, int only_objectness)
 {
 	int i, j, n;
 	float *predictions = l.output;
@@ -7880,7 +7880,7 @@ static int parse_softmax(softmax_layer *l, list *options, size_params params)
 	return SOD_OK;
 }
 /* =============================================================== Normalization  =============================================================== */
-static void forward_normalization_layer(const layer layer, network_state state)
+static void forward_normalization_layer(const layer_t layer, network_state state)
 {
 	int k, b;
 	int w = layer.w;
@@ -7910,7 +7910,7 @@ static void forward_normalization_layer(const layer layer, network_state state)
 	pow_cpu(w*h*c*layer.batch, -layer.beta, layer.norms, 1, layer.output, 1);
 	mul_cpu(w*h*c*layer.batch, state.input, 1, layer.output, 1);
 }
-static void backward_normalization_layer(const layer layer, network_state state)
+static void backward_normalization_layer(const layer_t layer, network_state state)
 {
 	/* TODO This is approximate ;-)
 	* Also this should add in to delta instead of overwritting.
@@ -7923,7 +7923,7 @@ static void backward_normalization_layer(const layer layer, network_state state)
 }
 
 #if 0 /* SOD_GPU */
-void forward_normalization_layer_gpu(const layer layer, network_state state)
+void forward_normalization_layer_gpu(const layer_t layer, network_state state)
 {
 	int k, b;
 	int w = layer.w;
@@ -7954,7 +7954,7 @@ void forward_normalization_layer_gpu(const layer layer, network_state state)
 	mul_ongpu(w*h*c*layer.batch, state.input, 1, layer.output_gpu, 1);
 }
 
-void backward_normalization_layer_gpu(const layer layer, network_state state)
+void backward_normalization_layer_gpu(const layer_t layer, network_state state)
 {
 	// TODO This is approximate ;-)
 
@@ -7965,9 +7965,9 @@ void backward_normalization_layer_gpu(const layer layer, network_state state)
 	mul_ongpu(w*h*c*layer.batch, layer.delta_gpu, 1, state.delta, 1);
 }
 #endif
-static layer make_normalization_layer(int batch, int w, int h, int c, int size, float alpha, float beta, float kappa)
+static layer_t make_normalization_layer(int batch, int w, int h, int c, int size, float alpha, float beta, float kappa)
 {
-	layer layer = { 0 };
+	layer_t layer = { 0 };
 	layer.type = NORMALIZATION;
 	layer.batch = batch;
 	layer.h = layer.out_h = h;
@@ -7997,7 +7997,7 @@ static layer make_normalization_layer(int batch, int w, int h, int c, int size, 
 #endif
 	return layer;
 }
-static int parse_normalization(layer *l, list *options, size_params params)
+static int parse_normalization(layer_t *l, list *options, size_params params)
 {
 	float alpha = option_find_float(options, "alpha", .0001);
 	float beta = option_find_float(options, "beta", .75);
@@ -8009,19 +8009,19 @@ static int parse_normalization(layer *l, list *options, size_params params)
 /* =============================================================== BATCHNORM  =============================================================== */
 #if 0 /* SOD_GPU */
 
-static void pull_batchnorm_layer(layer l)
+static void pull_batchnorm_layer(layer_t l)
 {
 	cuda_pull_array(l.scales_gpu, l.scales, l.c);
 	cuda_pull_array(l.rolling_mean_gpu, l.rolling_mean, l.c);
 	cuda_pull_array(l.rolling_variance_gpu, l.rolling_variance, l.c);
 }
-static void push_batchnorm_layer(layer l)
+static void push_batchnorm_layer(layer_t l)
 {
 	cuda_push_array(l.scales_gpu, l.scales, l.c);
 	cuda_push_array(l.rolling_mean_gpu, l.rolling_mean, l.c);
 	cuda_push_array(l.rolling_variance_gpu, l.rolling_variance, l.c);
 }
-static void forward_batchnorm_layer_gpu(layer l, network_state state)
+static void forward_batchnorm_layer_gpu(layer_t l, network_state state)
 {
 	if (l.type == BATCHNORM) copy_ongpu(l.outputs*l.batch, state.input, 1, l.output_gpu, 1);
 	if (l.type == CONNECTED) {
@@ -8047,7 +8047,7 @@ static void forward_batchnorm_layer_gpu(layer l, network_state state)
 
 	scale_bias_gpu(l.output_gpu, l.scales_gpu, l.batch, l.out_c, l.out_h*l.out_w);
 }
-static void backward_batchnorm_layer_gpu(const layer l, network_state state)
+static void backward_batchnorm_layer_gpu(const layer_t l, network_state state)
 {
 	backward_scale_gpu(l.x_norm_gpu, l.delta_gpu, l.batch, l.out_c, l.out_w*l.out_h, l.scale_updates_gpu);
 
@@ -8059,9 +8059,9 @@ static void backward_batchnorm_layer_gpu(const layer l, network_state state)
 	if (l.type == BATCHNORM) copy_ongpu(l.outputs*l.batch, l.delta_gpu, 1, state.delta, 1);
 }
 #endif
-static layer make_batchnorm_layer(int batch, int w, int h, int c)
+static layer_t make_batchnorm_layer(int batch, int w, int h, int c)
 {
-	layer layer = { 0 };
+	layer_t layer = { 0 };
 	layer.type = BATCHNORM;
 	layer.batch = batch;
 	layer.h = layer.out_h = h;
@@ -8111,14 +8111,14 @@ static layer make_batchnorm_layer(int batch, int w, int h, int c)
 #endif
 	return layer;
 }
-static int parse_batchnorm(layer *l, list *options, size_params params)
+static int parse_batchnorm(layer_t *l, list *options, size_params params)
 {
 	(void)options; /* cc warn on unused var */
 	*l = make_batchnorm_layer(params.batch, params.w, params.h, params.c);
 	return SOD_OK;
 }
 /* =============================================================== MAXPOOL  =============================================================== */
-typedef layer maxpool_layer;
+typedef layer_t maxpool_layer;
 static void forward_maxpool_layer(const maxpool_layer l, network_state state)
 {
 	int b, i, j, k, m, n;
@@ -8217,7 +8217,7 @@ static int parse_maxpool(maxpool_layer *l, list *options, size_params params, so
 	return SOD_OK;
 }
 /* =============================================================== REORG =============================================================== */
-static void forward_reorg_layer(const layer l, network_state state)
+static void forward_reorg_layer(const layer_t l, network_state state)
 {
 	if (l.reverse) {
 		reorg_cpu(state.input, l.w, l.h, l.c, l.batch, l.stride, 1, l.output);
@@ -8226,7 +8226,7 @@ static void forward_reorg_layer(const layer l, network_state state)
 		reorg_cpu(state.input, l.w, l.h, l.c, l.batch, l.stride, 0, l.output);
 	}
 }
-static void backward_reorg_layer(const layer l, network_state state)
+static void backward_reorg_layer(const layer_t l, network_state state)
 {
 	if (l.reverse) {
 		reorg_cpu(l.delta, l.w, l.h, l.c, l.batch, l.stride, 0, state.delta);
@@ -8236,7 +8236,7 @@ static void backward_reorg_layer(const layer l, network_state state)
 	}
 }
 #if 0 /* SOD_GPU */
-static void forward_reorg_layer_gpu(layer l, network_state state)
+static void forward_reorg_layer_gpu(layer_t l, network_state state)
 {
 	if (l.reverse) {
 		reorg_ongpu(state.input, l.w, l.h, l.c, l.batch, l.stride, 1, l.output_gpu);
@@ -8245,7 +8245,7 @@ static void forward_reorg_layer_gpu(layer l, network_state state)
 		reorg_ongpu(state.input, l.w, l.h, l.c, l.batch, l.stride, 0, l.output_gpu);
 	}
 }
-static void backward_reorg_layer_gpu(layer l, network_state state)
+static void backward_reorg_layer_gpu(layer_t l, network_state state)
 {
 	if (l.reverse) {
 		reorg_ongpu(l.delta_gpu, l.w, l.h, l.c, l.batch, l.stride, 0, state.delta);
@@ -8255,9 +8255,9 @@ static void backward_reorg_layer_gpu(layer l, network_state state)
 	}
 }
 #endif
-static layer make_reorg_layer(int batch, int w, int h, int c, int stride, int reverse)
+static layer_t make_reorg_layer(int batch, int w, int h, int c, int stride, int reverse)
 {
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.type = REORG;
 	l.batch = batch;
 	l.stride = stride;
@@ -8293,7 +8293,7 @@ static layer make_reorg_layer(int batch, int w, int h, int c, int stride, int re
 #endif
 	return l;
 }
-static int parse_reorg(layer *l, list *options, size_params params, sod_cnn *pNet)
+static int parse_reorg(layer_t *l, list *options, size_params params, sod_cnn *pNet)
 {
 	int stride = option_find_int(options, "stride", 1);
 	int reverse = option_find_int(options, "reverse", 0);
@@ -8312,7 +8312,7 @@ static int parse_reorg(layer *l, list *options, size_params params, sod_cnn *pNe
 	return SOD_OK;
 }
 /* =============================================================== AVGPOOL =============================================================== */
-typedef layer avgpool_layer;
+typedef layer_t avgpool_layer;
 static void forward_avgpool_layer(const avgpool_layer l, network_state state)
 {
 	int b, i, k;
@@ -8387,7 +8387,7 @@ static int parse_avgpool(avgpool_layer *l, list *options, size_params params, so
 	return SOD_OK;
 }
 /* =============================================================== ROUTE =============================================================== */
-typedef layer route_layer;
+typedef layer_t route_layer;
 static void forward_route_layer(const route_layer l, network_state state)
 {
 	int i, j;
@@ -8524,13 +8524,13 @@ static int parse_route(route_layer *lr, list *options, size_params params, netwo
 	return SOD_OK;
 }
 /* =============================================================== SHORTCUT =============================================================== */
-static void forward_shortcut_layer(const layer l, network_state state)
+static void forward_shortcut_layer(const layer_t l, network_state state)
 {
 	copy_cpu(l.outputs*l.batch, state.input, 1, l.output, 1);
 	shortcut_cpu(l.batch, l.w, l.h, l.c, state.net->layers[l.index].output, l.out_w, l.out_h, l.out_c, l.output);
 	activate_array(l.output, l.outputs*l.batch, l.activation);
 }
-static void backward_shortcut_layer(const layer l, network_state state)
+static void backward_shortcut_layer(const layer_t l, network_state state)
 {
 	gradient_array(l.output, l.outputs*l.batch, l.activation, l.delta);
 	axpy_cpu(l.outputs*l.batch, 1, l.delta, 1, state.delta, 1);
@@ -8538,22 +8538,22 @@ static void backward_shortcut_layer(const layer l, network_state state)
 }
 
 #if 0 /* SOD_GPU */
-static void forward_shortcut_layer_gpu(const layer l, network_state state)
+static void forward_shortcut_layer_gpu(const layer_t l, network_state state)
 {
 	copy_ongpu(l.outputs*l.batch, state.input, 1, l.output_gpu, 1);
 	shortcut_gpu(l.batch, l.w, l.h, l.c, state.net.layers[l.index].output_gpu, l.out_w, l.out_h, l.out_c, l.output_gpu);
 	activate_array_ongpu(l.output_gpu, l.outputs*l.batch, l.activation);
 }
-static void backward_shortcut_layer_gpu(const layer l, network_state state)
+static void backward_shortcut_layer_gpu(const layer_t l, network_state state)
 {
 	gradient_array_ongpu(l.output_gpu, l.outputs*l.batch, l.activation, l.delta_gpu);
 	axpy_ongpu(l.outputs*l.batch, 1, l.delta_gpu, 1, state.delta, 1);
 	shortcut_gpu(l.batch, l.out_w, l.out_h, l.out_c, l.delta_gpu, l.w, l.h, l.c, state.net.layers[l.index].delta_gpu);
 }
 #endif
-static layer make_shortcut_layer(int batch, int index, int w, int h, int c, int w2, int h2, int c2)
+static layer_t make_shortcut_layer(int batch, int index, int w, int h, int c, int w2, int h2, int c2)
 {
-	layer l = { 0 };
+	layer_t l = { 0 };
 	l.type = SHORTCUT;
 	l.batch = batch;
 	l.w = w2;
@@ -8581,14 +8581,14 @@ static layer make_shortcut_layer(int batch, int index, int w, int h, int c, int 
 #endif
 	return l;
 }
-static int parse_shortcut(layer *rl, list *options, size_params params, network *net)
+static int parse_shortcut(layer_t *rl, list *options, size_params params, network *net)
 {
 	char *l = option_find(options, "from");
 	int index = atoi(l);
 	if (index < 0) index = params.index + index;
 
 	int batch = params.batch;
-	layer from = net->layers[index];
+	layer_t from = net->layers[index];
 
 	*rl = make_shortcut_layer(batch, index, params.w, params.h, params.c, from.out_w, from.out_h, from.out_c);
 	rl->activation = get_activation(option_find_str(options, "activation", "linear"));
@@ -8596,7 +8596,7 @@ static int parse_shortcut(layer *rl, list *options, size_params params, network 
 	return SOD_OK;
 }
 /* =============================================================== DROPOUT =============================================================== */
-typedef layer dropout_layer;
+typedef layer_t dropout_layer;
 static void forward_dropout_layer(dropout_layer l, network_state state)
 {
 	int i;
@@ -8658,7 +8658,7 @@ static int parse_network_cfg(const char *zConf, sod_cnn *pNet)
 	size_params params;
 	section *s;
 	list *options;
-	layer l;
+	layer_t l;
 
 	if (!n) {
 		pNet->nErr++;
@@ -8695,7 +8695,7 @@ static int parse_network_cfg(const char *zConf, sod_cnn *pNet)
 	free_section(s);
 
 	while (n) {
-		memset(&l, 0, sizeof(layer));
+		memset(&l, 0, sizeof(layer_t));
 		params.index = count;
 		s = (section *)n->val;
 		options = s->options;
