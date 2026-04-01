@@ -49,9 +49,9 @@ static void cleanup_old_segments(const char *output_dir, int max_segments) {
     typedef struct {
         char filename[256];
         time_t mtime;
-    } segment_info_t;
+    } hls_segment_info_t;
 
-    segment_info_t *segments = NULL;
+    hls_segment_info_t *segments = NULL;
     int segment_count = 0;
     int actual_count = 0;
 
@@ -80,7 +80,7 @@ static void cleanup_old_segments(const char *output_dir, int max_segments) {
 
     // Allocate array for segment info with proper alignment
     // Use calloc instead of malloc to ensure memory is initialized to zero
-    segments = (segment_info_t *)calloc((size_t)segment_count, sizeof(segment_info_t));
+    segments = (hls_segment_info_t *)calloc((size_t)segment_count, sizeof(hls_segment_info_t));
     if (!segments) {
         log_error("Failed to allocate memory for segment cleanup");
         closedir(dir);
@@ -117,7 +117,7 @@ static void cleanup_old_segments(const char *output_dir, int max_segments) {
     for (int j = 0; j < actual_count - 1; j++) {
         for (int k = 0; k < actual_count - j - 1; k++) {
             if (segments[k].mtime > segments[k + 1].mtime) {
-                segment_info_t temp = segments[k];
+                hls_segment_info_t temp = segments[k];
                 segments[k] = segments[k + 1];
                 segments[k + 1] = temp;
             }
