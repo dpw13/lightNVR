@@ -108,6 +108,7 @@ static const env_config_mapping_t env_config_mappings[] = {
 
     // Web server settings
     {"WEB_PORT",           CONFIG_TYPE_INT,    CONFIG_OFFSET(web_port),           0,   NULL, 8080, false},
+    {"WEB_BIND_IP",        CONFIG_TYPE_STRING, CONFIG_OFFSET(web_bind_ip),        32,  "0.0.0.0", 0, false},
     {"WEB_AUTH_ENABLED",   CONFIG_TYPE_BOOL,   CONFIG_OFFSET(web_auth_enabled),   0,   NULL, 0, true},
     {"WEB_USERNAME",       CONFIG_TYPE_STRING, CONFIG_OFFSET(web_username),       32,  "admin", 0, false},
     {"WEB_TRUSTED_PROXY_CIDRS", CONFIG_TYPE_STRING, CONFIG_OFFSET(trusted_proxy_cidrs), WEB_TRUSTED_PROXY_CIDRS_MAX, "", 0, false},
@@ -352,6 +353,7 @@ void load_default_config(config_t *config) {
     
     // Web server settings
     config->web_port = 8080;
+    snprintf(config->web_bind_ip, 32, "0.0.0.0");
     snprintf(config->web_root, MAX_PATH_LENGTH, "/var/lib/lightnvr/www");
     config->web_auth_enabled = true;
     snprintf(config->web_username, 32, "admin");
@@ -748,6 +750,8 @@ static int config_ini_handler(void* user, const char* section, const char* name,
     else if (strcmp(section, "web") == 0) {
         if (strcmp(name, "port") == 0) {
             config->web_port = safe_atoi(value, 0);
+        } else if (strcmp(name, "bind_ip") == 0) {
+            strncpy(config->web_bind_ip, value, 31);
         } else if (strcmp(name, "root") == 0) {
             strncpy(config->web_root, value, MAX_PATH_LENGTH - 1);
         } else if (strcmp(name, "auth_enabled") == 0) {
@@ -1347,6 +1351,9 @@ int reload_config(config_t *config) {
     // Save copies of the current config fields needed for comparison
     int old_log_level = config->log_level;
     int old_web_port = config->web_port;
+    char old_web_bind_ip[32];
+    strncpy(old_web_bind_ip, config->web_bind_ip, 31);
+    old_web_bind_ip[31] = '\0';
     char old_storage_path[MAX_PATH_LENGTH];
     strncpy(old_storage_path, config->storage_path, sizeof(old_storage_path) - 1);
     old_storage_path[sizeof(old_storage_path) - 1] = '\0';
@@ -1374,6 +1381,11 @@ int reload_config(config_t *config) {
     if (old_web_port != config->web_port) {
         log_info("Web port changed: %d -> %d", old_web_port, config->web_port);
         log_warn("Web port change requires restart to take effect");
+    }
+
+    if (strcmp(old_web_bind_ip, config->web_bind_ip) != 0) {
+        log_info("Web bind address changed: %s -> %s", old_web_bind_ip, config->web_bind_ip);
+        log_warn("Web bind address change requires restart to take effect");
     }
     
     if (strcmp(old_storage_path, config->storage_path) != 0) {
@@ -1667,6 +1679,7 @@ int save_config(const config_t *config, const char *path) {
     fprintf(file, "[web]\n");
     fprintf(file, "web_thread_pool_size = %d  ; libuv UV_THREADPOOL_SIZE (default: 2x CPU cores; requires restart)\n", config->web_thread_pool_size);
     fprintf(file, "port = %d\n", config->web_port);
+    fprintf(file, "bind_ip = %s\n", config->web_bind_ip);
     fprintf(file, "root = %s\n", config->web_root);
     fprintf(file, "auth_enabled = %s\n", config->web_auth_enabled ? "true" : "false");
     fprintf(file, "username = %s\n", config->web_username);
@@ -1807,6 +1820,7 @@ void print_config(const config_t *config) {
     
     printf("  Web Server Settings:\n");
     printf("    Web Port: %d\n", config->web_port);
+    printf("    Web Bind Address: %s\n", config->web_bind_ip);
     printf("    Web Root: %s\n", config->web_root);
     printf("    Web Auth Enabled: %s\n", config->web_auth_enabled ? "true" : "false");
     printf("    Web Username: %s\n", config->web_username);

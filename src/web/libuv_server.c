@@ -171,7 +171,7 @@ static http_server_handle_t libuv_server_init_internal(const http_server_config_
         // Continue anyway - proxy requests will return 503
     }
 
-    log_info("libuv_server_init: Server initialized on port %d", config->port);
+    log_info("libuv_server_init: Server initialized on %s:%d", config->bind_ip, config->port);
 
     // Cast to generic handle type (http_server_t* is compatible pointer)
     return (http_server_handle_t)server;
@@ -293,9 +293,13 @@ int libuv_server_start(http_server_handle_t handle) {
 
     // Bind to address
     struct sockaddr_in addr;
-    uv_ip4_addr("0.0.0.0", server->config.port, &addr);
+    int r = uv_ip4_addr(server->config.bind_ip, server->config.port, &addr);
+    if (r != 0) {
+        log_error("libuv_server_start: IPv4 addr/port failed: %s", uv_strerror(r));
+        return -1;
+    }
 
-    int r = uv_tcp_bind(&server->listener, (const struct sockaddr *)&addr, 0);
+    r = uv_tcp_bind(&server->listener, (const struct sockaddr *)&addr, 0);
     if (r != 0) {
         log_error("libuv_server_start: Bind failed: %s", uv_strerror(r));
         return -1;
@@ -309,7 +313,7 @@ int libuv_server_start(http_server_handle_t handle) {
     }
 
     server->running = true;
-    log_info("libuv_server_start: Listening on port %d", server->config.port);
+    log_info("libuv_server_start: Listening on %s:%d", server->config.bind_ip, server->config.port);
 
     // Start event loop in separate thread if we own it
     if (server->owns_loop) {
