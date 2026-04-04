@@ -18,7 +18,7 @@
  */
 typedef struct {
     int port;                       // Server port
-    const char *bind_ip;            // Server bind address
+    const struct in_addr bind_ip;   // Server bind address
     const char *web_root;           // Web root directory
     bool auth_enabled;              // Authentication enabled
     char username[32];              // Authentication username

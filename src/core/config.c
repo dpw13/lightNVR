@@ -12,10 +12,12 @@
 #include <ctype.h>
 #include <limits.h>
 #include <syslog.h>
+#include <arpa/inet.h>
 
 #include "ini.h"
 #include "core/config.h"
 #include "core/logger.h"
+#include "core/url_utils.h"
 #include "database/database_manager.h"
 
 // Global configuration variable
@@ -72,7 +74,8 @@ static int safe_atoi(const char *str, int fallback) {
 typedef enum {
     CONFIG_TYPE_BOOL,
     CONFIG_TYPE_INT,
-    CONFIG_TYPE_STRING
+    CONFIG_TYPE_STRING,
+    CONFIG_TYPE_IP,
 } config_field_type_t;
 
 // Environment variable to config field mapping entry
@@ -108,7 +111,7 @@ static const env_config_mapping_t env_config_mappings[] = {
 
     // Web server settings
     {"WEB_PORT",           CONFIG_TYPE_INT,    CONFIG_OFFSET(web_port),           0,   NULL, 8080, false},
-    {"WEB_BIND_IP",        CONFIG_TYPE_STRING, CONFIG_OFFSET(web_bind_ip),        32,  "0.0.0.0", 0, false},
+    {"WEB_BIND_IP",        CONFIG_TYPE_IP,     CONFIG_OFFSET(web_bind_ip),        0,   NULL, INADDR_ANY, false},
     {"WEB_AUTH_ENABLED",   CONFIG_TYPE_BOOL,   CONFIG_OFFSET(web_auth_enabled),   0,   NULL, 0, true},
     {"WEB_USERNAME",       CONFIG_TYPE_STRING, CONFIG_OFFSET(web_username),       32,  "admin", 0, false},
     {"WEB_TRUSTED_PROXY_CIDRS", CONFIG_TYPE_STRING, CONFIG_OFFSET(trusted_proxy_cidrs), WEB_TRUSTED_PROXY_CIDRS_MAX, "", 0, false},
@@ -187,21 +190,22 @@ static void apply_env_overrides(config_t *config) {
         bool is_default = false;
 
         switch (mapping->type) {
-            case CONFIG_TYPE_BOOL: {
+            case CONFIG_TYPE_BOOL:
                 const bool *bool_ptr = (const bool *)field_ptr;
                 is_default = (*bool_ptr == mapping->default_bool_value);
                 break;
-            }
-            case CONFIG_TYPE_INT: {
+            case CONFIG_TYPE_INT:
                 const int *int_ptr = (const int *)field_ptr;
                 is_default = (*int_ptr == mapping->default_int_value);
                 break;
-            }
-            case CONFIG_TYPE_STRING: {
+            case CONFIG_TYPE_STRING:
                 const char *str_ptr = (const char *)field_ptr;
                 is_default = is_string_default(str_ptr, mapping->default_str_value);
                 break;
-            }
+            case CONFIG_TYPE_IP:
+                const struct in_addr *ip_ptr = (const struct in_addr *)field_ptr;
+                is_default = (ip_ptr->s_addr == INADDR_ANY);
+                break;
         }
 
         if (!is_default) {
@@ -255,6 +259,21 @@ static void apply_env_overrides(config_t *config) {
                              env_name);
                 } else {
                     log_info("Applied env override: %s=%s (string)",
+                             env_name, env_value);
+                }
+                break;
+            }
+            case CONFIG_TYPE_IP: {
+                struct in_addr *ip_ptr = (struct in_addr *)field_ptr;
+                struct in_addr tmp;
+                // TODO: support IPv6 addresses
+                int ret = inet_aton(env_value, &tmp);
+                if (ret != 0) {
+                    log_warn("Invalid IP address for %s: '%s'; keeping existing value %s",
+                                env_name, env_value, inet_ntoa(*ip_ptr));
+                } else {
+                    memcpy(ip_ptr, &tmp, sizeof(struct in_addr));
+                    log_info("Applied env override: %s=%s (IP)",
                              env_name, env_value);
                 }
                 break;
@@ -353,7 +372,7 @@ void load_default_config(config_t *config) {
     
     // Web server settings
     config->web_port = 8080;
-    snprintf(config->web_bind_ip, 32, "0.0.0.0");
+    config->web_bind_ip.s_addr = INADDR_ANY;
     snprintf(config->web_root, MAX_PATH_LENGTH, "/var/lib/lightnvr/www");
     config->web_auth_enabled = true;
     snprintf(config->web_username, 32, "admin");
@@ -624,7 +643,7 @@ int validate_config(config_t *config) {
         log_error("Invalid web port: %d", config->web_port);
         return -1;
     }
-    
+
     // Check buffer size
     if (config->buffer_size <= 0) {
         log_error("Invalid buffer size: %d", config->buffer_size);
@@ -751,8 +770,11 @@ static int config_ini_handler(void* user, const char* section, const char* name,
         if (strcmp(name, "port") == 0) {
             config->web_port = safe_atoi(value, 0);
         } else if (strcmp(name, "bind_ip") == 0) {
-            strncpy(config->web_bind_ip, value, sizeof(config->web_bind_ip) - 1);
-            config->web_bind_ip[sizeof(config->web_bind_ip) - 1] = '\0';
+            int ret = inet_aton(value, &config->web_bind_ip);
+            if (ret != 0) {
+                log_error("Invalid IP address for %s: %s", name, value);
+                config->web_bind_ip.s_addr = INADDR_ANY;
+            }
         } else if (strcmp(name, "root") == 0) {
             strncpy(config->web_root, value, MAX_PATH_LENGTH - 1);
         } else if (strcmp(name, "auth_enabled") == 0) {
@@ -1352,9 +1374,7 @@ int reload_config(config_t *config) {
     // Save copies of the current config fields needed for comparison
     int old_log_level = config->log_level;
     int old_web_port = config->web_port;
-    char old_web_bind_ip[32];
-    strncpy(old_web_bind_ip, config->web_bind_ip, 31);
-    old_web_bind_ip[31] = '\0';
+    struct in_addr old_web_bind_ip = config->web_bind_ip;
     char old_storage_path[MAX_PATH_LENGTH];
     strncpy(old_storage_path, config->storage_path, sizeof(old_storage_path) - 1);
     old_storage_path[sizeof(old_storage_path) - 1] = '\0';
@@ -1384,8 +1404,13 @@ int reload_config(config_t *config) {
         log_warn("Web port change requires restart to take effect");
     }
 
-    if (strcmp(old_web_bind_ip, config->web_bind_ip) != 0) {
-        log_info("Web bind address changed: %s -> %s", old_web_bind_ip, config->web_bind_ip);
+    if (memcmp(&old_web_bind_ip, &config->web_bind_ip, sizeof(struct in_addr)) != 0) {
+        char old_ip[32] = {0};
+        char new_ip[32] = {0};
+        // inet_ntoa buffer is statically allocated: copy each value as it's produced.
+        strncpy(old_ip, inet_ntoa(old_web_bind_ip), 31);
+        strncpy(new_ip, inet_ntoa(config->web_bind_ip), 31);
+        log_info("Web bind address changed: %s -> %s", old_ip, new_ip);
         log_warn("Web bind address change requires restart to take effect");
     }
     
@@ -1680,7 +1705,7 @@ int save_config(const config_t *config, const char *path) {
     fprintf(file, "[web]\n");
     fprintf(file, "web_thread_pool_size = %d  ; libuv UV_THREADPOOL_SIZE (default: 2x CPU cores; requires restart)\n", config->web_thread_pool_size);
     fprintf(file, "port = %d\n", config->web_port);
-    fprintf(file, "bind_ip = %s\n", config->web_bind_ip);
+    fprintf(file, "bind_ip = %s\n", inet_ntoa(config->web_bind_ip));
     fprintf(file, "root = %s\n", config->web_root);
     fprintf(file, "auth_enabled = %s\n", config->web_auth_enabled ? "true" : "false");
     fprintf(file, "username = %s\n", config->web_username);
@@ -1821,7 +1846,7 @@ void print_config(const config_t *config) {
     
     printf("  Web Server Settings:\n");
     printf("    Web Port: %d\n", config->web_port);
-    printf("    Web Bind Address: %s\n", config->web_bind_ip);
+    printf("    Web Bind Address: %s\n", inet_ntoa(config->web_bind_ip));
     printf("    Web Root: %s\n", config->web_root);
     printf("    Web Auth Enabled: %s\n", config->web_auth_enabled ? "true" : "false");
     printf("    Web Username: %s\n", config->web_username);

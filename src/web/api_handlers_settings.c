@@ -10,6 +10,7 @@
 #include <syslog.h>
 #include <pthread.h>
 #include <cjson/cJSON.h>
+#include <arpa/inet.h>
 
 #include "web/api_handlers.h"
 #include "web/api_handlers_common.h"
@@ -275,7 +276,7 @@ void handle_get_settings(const http_request_t *req, http_response_t *res) {
     // Add settings properties
     cJSON_AddNumberToObject(settings, "web_thread_pool_size", g_config.web_thread_pool_size);
     cJSON_AddNumberToObject(settings, "web_port", g_config.web_port);
-    cJSON_AddStringToObject(settings, "web_bind_ip", g_config.web_bind_ip);
+    cJSON_AddStringToObject(settings, "web_bind_ip", inet_ntoa(g_config.web_bind_ip));
     cJSON_AddStringToObject(settings, "web_root", g_config.web_root);
     cJSON_AddBoolToObject(settings, "web_auth_enabled", g_config.web_auth_enabled);
     cJSON_AddBoolToObject(settings, "demo_mode", g_config.demo_mode);
@@ -480,30 +481,22 @@ void handle_post_settings(const http_request_t *req, http_response_t *res) {
     if (web_port && cJSON_IsNumber(web_port)) {
         g_config.web_port = web_port->valueint;
         settings_changed = true;
+        restart_required = true;
         log_info("Updated web_port: %d", g_config.web_port);
     }
 
     // Web bind address
     cJSON *web_bind_ip = cJSON_GetObjectItem(settings, "web_bind_ip");
     if (web_bind_ip && cJSON_IsString(web_bind_ip)) {
-        const char *new_bind_ip = web_bind_ip->valuestring;
-        bool bind_ip_empty = (new_bind_ip == NULL);
-
-        if (!bind_ip_empty) {
-            while (isspace((unsigned char)*new_bind_ip)) {
-                new_bind_ip++;
-            }
-            bind_ip_empty = (*new_bind_ip == '\0');
-        }
-
-        if (bind_ip_empty) {
-            log_warn("Rejected empty web_bind_ip update");
-        } else if (strcmp(g_config.web_bind_ip, new_bind_ip) != 0) {
-            strncpy(g_config.web_bind_ip, new_bind_ip, sizeof(g_config.web_bind_ip) - 1);
-            g_config.web_bind_ip[sizeof(g_config.web_bind_ip) - 1] = '\0';
+        struct in_addr tmp;
+        int ret = inet_aton(web_bind_ip->valuestring, &tmp);
+        if (ret != 0) {
+            log_error("Invalid web bind address: %s", web_bind_ip->valuestring);
+        } else {
+            memcpy(&g_config.web_bind_ip, &tmp, sizeof(struct in_addr));
+            log_info("Updated web_bind_ip: %s", inet_ntoa(g_config.web_bind_ip));
             settings_changed = true;
             restart_required = true;
-            log_info("Updated web_bind_ip: %s (restart required)", g_config.web_bind_ip);
         }
     }
 

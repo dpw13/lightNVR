@@ -1517,7 +1517,7 @@ void handle_post_system_backup(const http_request_t *req, http_response_t *res) 
 
     // Add config properties
     cJSON_AddNumberToObject(config, "web_port", g_config.web_port);
-    cJSON_AddStringToObject(config, "web_bind_ip", g_config.web_bind_ip);
+    cJSON_AddStringToObject(config, "web_bind_ip", inet_ntoa(g_config.web_bind_ip));
     cJSON_AddStringToObject(config, "web_root", g_config.web_root);
     cJSON_AddStringToObject(config, "log_file", g_config.log_file);
     cJSON_AddStringToObject(config, "pid_file", g_config.pid_file);

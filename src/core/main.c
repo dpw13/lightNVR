@@ -934,7 +934,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize HTTP server (libuv + llhttp)
     log_info("Initializing web server on %s:%d (daemon_mode: %s)",
-             config.web_bind_ip, config.web_port, daemon_mode ? "true" : "false");
+             inet_ntoa(config.web_bind_ip), config.web_port, daemon_mode ? "true" : "false");
 
     http_server = libuv_server_init(&server_config);
     if (!http_server) {
@@ -963,13 +963,13 @@ int main(int argc, char *argv[]) {
 
     log_info("Starting web server...");
     if (http_server_start(http_server) != 0) {
-        log_error("Failed to start libuv web server on %s:%d", config.web_bind_ip, config.web_port);
+        log_error("Failed to start libuv web server on %s:%d", inet_ntoa(config.web_bind_ip), config.web_port);
         http_server_destroy(http_server);
         http_server = NULL;  // Prevent double-free in cleanup
         goto cleanup;
     }
 
-    log_info("libuv web server started successfully on %s:%d", config.web_bind_ip, config.web_port);
+    log_info("libuv web server started successfully on %s:%d", inet_ntoa(config.web_bind_ip), config.web_port);
 
     // Initialize and start health check system for web server self-healing
     init_health_check_system();
@@ -987,7 +987,11 @@ int main(int argc, char *argv[]) {
             struct sockaddr_in addr;
             memset(&addr, 0, sizeof(addr));
             addr.sin_family = AF_INET;
-            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (config.web_bind_ip.s_addr == INADDR_ANY) {
+                addr.sin_addr.s_addr = INADDR_LOOPBACK;
+            } else {
+                addr.sin_addr = config.web_bind_ip;
+            }
             addr.sin_port = htons(config.web_port);
 
             if (connect(test_socket, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
