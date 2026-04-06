@@ -240,8 +240,8 @@ int update_recording_start_time(uint64_t id, time_t start_time) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        log_error("Failed to update recording start_time (id=%lu): %s",
-                  (unsigned long)id, sqlite3_errmsg(db));
+        log_error("Failed to update recording start_time (id=%llu): %s",
+                  (unsigned long long)id, sqlite3_errmsg(db));
         sqlite3_finalize(stmt);
         pthread_mutex_unlock(db_mutex);
         return -1;
@@ -250,8 +250,8 @@ int update_recording_start_time(uint64_t id, time_t start_time) {
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(db_mutex);
 
-    log_debug("Corrected start_time for recording ID %lu to %ld",
-              (unsigned long)id, (long)start_time);
+    log_debug("Corrected start_time for recording ID %llu to %ld",
+              (unsigned long long)id, (long)start_time);
     return 0;
 }
 
