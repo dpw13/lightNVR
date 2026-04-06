@@ -229,9 +229,9 @@ void mp4_writer_close(mp4_writer_t *writer) {
          * actual wall-clock moment the last byte was written to disk, and it does
          * not depend on writer->creation_time matching the DB start_time.
          *
-         * Copilot review observation: creation_time is set at rotation time while
-         * the DB start_time is recorded at the first keyframe — a mismatch of up
-         * to one GOP interval.  st.st_mtime avoids this drift entirely.
+         * creation_time is set at rotation time while the DB start_time is
+         * recorded at the first keyframe, which can introduce a mismatch of up
+         * to one GOP interval. st.st_mtime avoids this drift entirely.
          *
          * get_mp4_file_duration_seconds() is still called for log diagnostics. */
         time_t end_time = stat_ok ? st.st_mtime : time(NULL);
