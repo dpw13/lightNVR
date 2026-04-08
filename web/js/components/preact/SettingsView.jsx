@@ -797,8 +797,6 @@ export function SettingsView() {
               type="text"
               id="setting-web-bind-ip"
               name="webBindIp"
-              min="1"
-              max="65535"
               class="col-span-2 p-2 border border-input rounded bg-background text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
               value={settings.webBindIp}
               onChange={handleInputChange}
