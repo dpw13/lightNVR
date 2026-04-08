@@ -153,6 +153,7 @@ typedef struct {
     // Web server settings
     int web_thread_pool_size; // libuv UV_THREADPOOL_SIZE (default: 2x CPU cores, requires restart)
     int web_port;
+    char web_bind_ip[32];
     char web_root[MAX_PATH_LENGTH];
     bool web_auth_enabled;
     char web_username[32];

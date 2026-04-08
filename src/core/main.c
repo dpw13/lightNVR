@@ -912,6 +912,7 @@ int main(int argc, char *argv[]) {
     // Initialize web server with direct handlers
     http_server_config_t server_config = {
         .port = config.web_port,
+        .bind_ip = config.web_bind_ip,
         .web_root = config.web_root,
         .auth_enabled = config.web_auth_enabled,
         .cors_enabled = true,
@@ -932,8 +933,8 @@ int main(int argc, char *argv[]) {
     }
 
     // Initialize HTTP server (libuv + llhttp)
-    log_info("Initializing web server on port %d (daemon_mode: %s)",
-             config.web_port, daemon_mode ? "true" : "false");
+    log_info("Initializing web server on %s:%d (daemon_mode: %s)",
+             config.web_bind_ip, config.web_port, daemon_mode ? "true" : "false");
 
     http_server = libuv_server_init(&server_config);
     if (!http_server) {
@@ -962,13 +963,13 @@ int main(int argc, char *argv[]) {
 
     log_info("Starting web server...");
     if (http_server_start(http_server) != 0) {
-        log_error("Failed to start libuv web server on port %d", config.web_port);
+        log_error("Failed to start libuv web server on %s:%d", config.web_bind_ip, config.web_port);
         http_server_destroy(http_server);
         http_server = NULL;  // Prevent double-free in cleanup
         goto cleanup;
     }
 
-    log_info("libuv web server started successfully on port %d", config.web_port);
+    log_info("libuv web server started successfully on %s:%d", config.web_bind_ip, config.web_port);
 
     // Initialize and start health check system for web server self-healing
     init_health_check_system();
