@@ -751,7 +751,8 @@ static int config_ini_handler(void* user, const char* section, const char* name,
         if (strcmp(name, "port") == 0) {
             config->web_port = safe_atoi(value, 0);
         } else if (strcmp(name, "bind_ip") == 0) {
-            strncpy(config->web_bind_ip, value, 31);
+            strncpy(config->web_bind_ip, value, sizeof(config->web_bind_ip) - 1);
+            config->web_bind_ip[sizeof(config->web_bind_ip) - 1] = '\0';
         } else if (strcmp(name, "root") == 0) {
             strncpy(config->web_root, value, MAX_PATH_LENGTH - 1);
         } else if (strcmp(name, "auth_enabled") == 0) {
