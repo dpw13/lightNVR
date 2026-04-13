@@ -217,12 +217,14 @@ EOF
     log_info "Setting permissions..."
     CURRENT_UID="$(id -u)"
     CURRENT_GID="$(id -g)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /var/lib/lightnvr 2>/dev/null || log_warn "Could not set ownership on /var/lib/lightnvr (may be on NFS)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /etc/lightnvr 2>/dev/null || log_warn "Could not set ownership on /etc/lightnvr (may be on NFS)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /var/log/lightnvr 2>/dev/null || log_warn "Could not set ownership on /var/log/lightnvr"
-    chmod -R 755 /var/lib/lightnvr 2>/dev/null || log_warn "Could not set permissions on /var/lib/lightnvr (may be on NFS)"
-    chmod -R 755 /etc/lightnvr 2>/dev/null || log_warn "Could not set permissions on /etc/lightnvr (may be on NFS)"
-    chmod -R 755 /var/log/lightnvr 2>/dev/null || log_warn "Could not set permissions on /var/log/lightnvr"
+    # Set permissions on directories only; there may be *many* files here if this is a large deployment
+    find /var/lib/lightnvr/ -type d -exec chown "${CURRENT_UID}:${CURRENT_GID}" {} \+ || log_warn "Could not set ownership on /var/lib/lightnvr (may be on NFS)"
+    find /var/lib/lightnvr/ -type d -exec chmod 0755 {} \+ || log_warn "Could not set permissions on /var/lib/lightnvr (may be on NFS)"
+    find /var/log/lightnvr -type d -exec chown "${CURRENT_UID}:${CURRENT_GID}" {} \+ || log_warn "Could not set ownership on /var/log/lightnvr"
+    find /var/log/lightnvr -type d -exec chmod 0755 {} \+ || log_warn "Could not set permissions on /var/log/lightnvr"
+    # Set owner on all files
+    find /etc/lightnvr -exec chown "${CURRENT_UID}:${CURRENT_GID}" {} \+ || log_warn "Could not set ownership on /etc/lightnvr (may be on NFS)"
+    find /var/log/lightnvr -type d -exec chmod 0755 {} \+ || log_warn "Could not set permissions on /etc/lightnvr (may be on NFS)"
 
     # Test write permissions on critical directories
     log_info "Testing write permissions..."
