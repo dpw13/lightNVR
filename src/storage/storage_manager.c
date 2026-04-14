@@ -25,11 +25,15 @@
 
 // Maximum number of streams to process at once
 #define MAX_STREAMS_BATCH 64
-// Maximum recordings to delete per stream per run
+// Maximum recordings to delete per stream per batch (loop fetches multiple batches)
 #define MAX_RECORDINGS_PER_STREAM 100
 
 // Maximum orphaned recordings to process per run
-#define MAX_ORPHANED_BATCH 100
+#define MAX_ORPHANED_BATCH 500
+
+// Time budget (seconds) for the entire retention policy pass.
+// Prevents the cleanup thread from blocking indefinitely on massive backlogs.
+#define RETENTION_TIME_BUDGET_SEC 300
 
 // Default retention period (in days) when no global or stream-specific value is configured
 #define DEFAULT_RETENTION_DAYS 30
@@ -304,6 +308,7 @@ int apply_retention_policy(void) {
 
     int total_deleted = 0;
     uint64_t total_freed = 0;
+    time_t budget_start = time(NULL);
 
     // Get list of all stream names
     char stream_names[MAX_STREAMS_BATCH][MAX_STREAM_NAME];
@@ -319,10 +324,30 @@ int apply_retention_policy(void) {
         return 0;
     }
 
+    if (stream_count == MAX_STREAMS_BATCH) {
+        log_warn("Stream count reached batch limit (%d) - some streams may be skipped for retention cleanup",
+                 MAX_STREAMS_BATCH);
+    }
+
     log_info("Processing retention policy for %d streams", stream_count);
+
+    // Allocate a reusable batch buffer on the heap (avoids large stack frames in loops)
+    recording_metadata_t *batch = calloc(MAX_RECORDINGS_PER_STREAM, sizeof(recording_metadata_t));
+    if (!batch) {
+        log_error("Failed to allocate recording batch buffer for retention policy");
+        return -1;
+    }
 
     // Process each stream
     for (int s = 0; s < stream_count; s++) {
+        // Check time budget
+        if (time(NULL) - budget_start >= RETENTION_TIME_BUDGET_SEC) {
+            log_warn("Retention time budget (%d s) exceeded after processing %d/%d streams, "
+                     "deleted %d recordings so far - remaining streams deferred to next cycle",
+                     RETENTION_TIME_BUDGET_SEC, s, stream_count, total_deleted);
+            break;
+        }
+
         const char *stream_name = stream_names[s];
         stream_retention_config_t config;
 
@@ -345,30 +370,40 @@ int apply_retention_policy(void) {
         }
 
         // Phase 1: Time-based retention cleanup
+        // Loop until all expired recordings for this stream are deleted
         if (config.retention_days > 0 || config.detection_retention_days > 0) {
-            recording_metadata_t recordings[MAX_RECORDINGS_PER_STREAM];
-            int count = get_recordings_for_retention(stream_name,
+            int stream_deleted = 0;
+            int count;
+            do {
+                if (time(NULL) - budget_start >= RETENTION_TIME_BUDGET_SEC) break;
+
+                count = get_recordings_for_retention(stream_name,
                                                      config.retention_days,
                                                      config.detection_retention_days,
-                                                     recordings,
+                                                     batch,
                                                      MAX_RECORDINGS_PER_STREAM);
 
-            if (count > 0) {
-                log_info("Stream %s: found %d recordings past retention", stream_name, count);
-
-                for (int i = 0; i < count; i++) {
-                    uint64_t freed_bytes = 0;
-                    if (delete_recording_file_and_metadata(&recordings[i],
-                                                          "Retention cleanup",
-                                                          &freed_bytes)) {
-                        total_freed += freed_bytes;
-                        total_deleted++;
+                if (count > 0) {
+                    for (int i = 0; i < count; i++) {
+                        uint64_t freed_bytes = 0;
+                        if (delete_recording_file_and_metadata(&batch[i],
+                                                              "Retention cleanup",
+                                                              &freed_bytes)) {
+                            total_freed += freed_bytes;
+                            total_deleted++;
+                            stream_deleted++;
+                        }
                     }
                 }
+            } while (count == MAX_RECORDINGS_PER_STREAM);
+
+            if (stream_deleted > 0) {
+                log_info("Stream %s: deleted %d recordings past retention", stream_name, stream_deleted);
             }
         }
 
         // Phase 2: Storage quota enforcement
+        // Loop until usage is within quota or no more eligible recordings
         if (config.max_storage_mb > 0) {
             uint64_t current_usage = get_stream_storage_bytes(stream_name);
             uint64_t max_bytes = config.max_storage_mb * 1024 * 1024;
@@ -378,22 +413,26 @@ int apply_retention_policy(void) {
                 log_info("Stream %s: over quota by %lu bytes, need to free space",
                         stream_name, (unsigned long)to_free);
 
-                recording_metadata_t recordings[MAX_RECORDINGS_PER_STREAM];
-                int count = get_recordings_for_quota_enforcement(stream_name,
-                                                                  recordings,
+                uint64_t freed = 0;
+                int count;
+                do {
+                    if (time(NULL) - budget_start >= RETENTION_TIME_BUDGET_SEC) break;
+
+                    count = get_recordings_for_quota_enforcement(stream_name,
+                                                                  batch,
                                                                   MAX_RECORDINGS_PER_STREAM);
 
-                uint64_t freed = 0;
-                for (int i = 0; i < count && freed < to_free; i++) {
-                    uint64_t freed_bytes = 0;
-                    if (delete_recording_file_and_metadata(&recordings[i],
-                                                          "Quota cleanup",
-                                                          &freed_bytes)) {
-                        freed += freed_bytes;
-                        total_freed += freed_bytes;
-                        total_deleted++;
+                    for (int i = 0; i < count && freed < to_free; i++) {
+                        uint64_t freed_bytes = 0;
+                        if (delete_recording_file_and_metadata(&batch[i],
+                                                              "Quota cleanup",
+                                                              &freed_bytes)) {
+                            freed += freed_bytes;
+                            total_freed += freed_bytes;
+                            total_deleted++;
+                        }
                     }
-                }
+                } while (count == MAX_RECORDINGS_PER_STREAM && freed < to_free);
 
                 log_info("Stream %s: freed %lu bytes for quota enforcement",
                         stream_name, (unsigned long)freed);
@@ -401,50 +440,57 @@ int apply_retention_policy(void) {
         }
     }
 
+    free(batch);
+
     // Phase 3: Clean up orphaned database entries (files that no longer exist)
     // Safety check: verify storage is actually accessible before orphan cleanup.
     // If storage is unavailable (mount lost, etc.), every recording looks "orphaned"
     // and we'd incorrectly wipe the entire database.
-    bool storage_accessible = false;
-    {
-        char mp4_path[MAX_PATH_LENGTH];
-        snprintf(mp4_path, sizeof(mp4_path), "%s/%s", storage_manager.storage_path, MP4_SUBDIR);
-        struct stat st;
-        if (stat(storage_manager.storage_path, &st) == 0 && S_ISDIR(st.st_mode) &&
-            stat(mp4_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            storage_accessible = true;
+    if (time(NULL) - budget_start < RETENTION_TIME_BUDGET_SEC) {
+        bool storage_accessible = false;
+        {
+            char mp4_path[MAX_PATH_LENGTH];
+            snprintf(mp4_path, sizeof(mp4_path), "%s/%s", storage_manager.storage_path, MP4_SUBDIR);
+            struct stat st;
+            if (stat(storage_manager.storage_path, &st) == 0 && S_ISDIR(st.st_mode) &&
+                stat(mp4_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                storage_accessible = true;
+            }
         }
-    }
 
-    if (!storage_accessible) {
-        log_error("Storage path %s or mp4 subdirectory is not accessible - "
-                  "skipping orphan cleanup to prevent incorrect mass deletion",
-                  storage_manager.storage_path);
-    } else {
-        int total_checked = 0;
-        recording_metadata_t orphaned[MAX_ORPHANED_BATCH];
-        int orphan_count = get_orphaned_db_entries(orphaned, MAX_ORPHANED_BATCH, &total_checked);
+        if (!storage_accessible) {
+            log_error("Storage path %s or mp4 subdirectory is not accessible - "
+                      "skipping orphan cleanup to prevent incorrect mass deletion",
+                      storage_manager.storage_path);
+        } else {
+            int total_checked = 0;
+            recording_metadata_t *orphaned = calloc(MAX_ORPHANED_BATCH, sizeof(recording_metadata_t));
+            if (orphaned) {
+                int orphan_count = get_orphaned_db_entries(orphaned, MAX_ORPHANED_BATCH, &total_checked);
 
-        if (orphan_count > 0 && total_checked > 0) {
-            // Safety threshold: if more than 50% of checked recordings appear orphaned,
-            // this is almost certainly a storage availability problem, not genuine orphans.
-            double orphan_ratio = (double)orphan_count / (double)total_checked;
-            if (orphan_ratio > ORPHAN_SAFETY_THRESHOLD &&
-                total_checked >= MIN_RECORDINGS_FOR_THRESHOLD) {
-                log_error("Orphan safety threshold exceeded: %d of %d checked recordings (%.0f%%) "
-                          "appear orphaned - this likely indicates a storage availability issue, "
-                          "skipping orphan cleanup to protect database integrity",
-                          orphan_count, total_checked, orphan_ratio * 100.0);
-            } else {
-                log_info("Found %d orphaned database entries (checked %d, ratio %.0f%%), cleaning up",
-                         orphan_count, total_checked, orphan_ratio * 100.0);
+                if (orphan_count > 0 && total_checked > 0) {
+                    // Safety threshold: if more than 50% of checked recordings appear orphaned,
+                    // this is almost certainly a storage availability problem, not genuine orphans.
+                    double orphan_ratio = (double)orphan_count / (double)total_checked;
+                    if (orphan_ratio > ORPHAN_SAFETY_THRESHOLD &&
+                        total_checked >= MIN_RECORDINGS_FOR_THRESHOLD) {
+                        log_error("Orphan safety threshold exceeded: %d of %d checked recordings (%.0f%%) "
+                                  "appear orphaned - this likely indicates a storage availability issue, "
+                                  "skipping orphan cleanup to protect database integrity",
+                                  orphan_count, total_checked, orphan_ratio * 100.0);
+                    } else {
+                        log_info("Found %d orphaned database entries (checked %d, ratio %.0f%%), cleaning up",
+                                 orphan_count, total_checked, orphan_ratio * 100.0);
 
-                for (int i = 0; i < orphan_count; i++) {
-                    if (delete_recording_metadata(orphaned[i].id) == 0) {
-                        log_debug("Deleted orphaned DB entry: ID %llu, path %s",
-                                 (unsigned long long)orphaned[i].id, orphaned[i].file_path);
+                        for (int i = 0; i < orphan_count; i++) {
+                            if (delete_recording_metadata(orphaned[i].id) == 0) {
+                                log_debug("Deleted orphaned DB entry: ID %llu, path %s",
+                                         (unsigned long long)orphaned[i].id, orphaned[i].file_path);
+                            }
+                        }
                     }
                 }
+                free(orphaned);
             }
         }
     }
@@ -813,6 +859,7 @@ static void standard_cleanup_cycle(void) {
     }
 
     // 2. Tiered retention cleanup using new tier-aware queries
+    // Loop per stream until all expired tier recordings are cleared
     int tier_deleted = 0;
     uint64_t tier_freed = 0;
     recording_metadata_t *tier_recs = calloc(MAX_RECORDINGS_PER_STREAM, sizeof(recording_metadata_t));
@@ -820,6 +867,11 @@ static void standard_cleanup_cycle(void) {
         // Get all stream names
         char stream_names[MAX_STREAMS_BATCH][MAX_STREAM_NAME];
         int stream_count = get_all_stream_names(stream_names, MAX_STREAMS_BATCH);
+
+        if (stream_count == MAX_STREAMS_BATCH) {
+            log_warn("Tiered cleanup: stream count reached batch limit (%d) - some streams may be skipped",
+                     MAX_STREAMS_BATCH);
+        }
 
         for (int s = 0; s < stream_count && unified_ctrl.running; s++) {
             // Get stream config for tier multipliers
@@ -848,20 +900,25 @@ static void standard_cleanup_cycle(void) {
                          stream_names[s]);
             }
 
-            int count = get_recordings_for_tiered_retention(
-                stream_names[s], base_retention,
-                tier_mults,
-                tier_recs, MAX_RECORDINGS_PER_STREAM);
+            int count;
+            do {
+                if (!unified_ctrl.running) break;
 
-            for (int i = 0; i < count && unified_ctrl.running; i++) {
-                uint64_t freed_bytes = 0;
-                if (delete_recording_file_and_metadata(&tier_recs[i],
-                                                      "Tiered cleanup",
-                                                      &freed_bytes)) {
-                    tier_freed += freed_bytes;
-                    tier_deleted++;
+                count = get_recordings_for_tiered_retention(
+                    stream_names[s], base_retention,
+                    tier_mults,
+                    tier_recs, MAX_RECORDINGS_PER_STREAM);
+
+                for (int i = 0; i < count && unified_ctrl.running; i++) {
+                    uint64_t freed_bytes = 0;
+                    if (delete_recording_file_and_metadata(&tier_recs[i],
+                                                          "Tiered cleanup",
+                                                          &freed_bytes)) {
+                        tier_freed += freed_bytes;
+                        tier_deleted++;
+                    }
                 }
-            }
+            } while (count == MAX_RECORDINGS_PER_STREAM);
         }
         free(tier_recs);
     }

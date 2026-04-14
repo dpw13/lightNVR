@@ -1657,11 +1657,16 @@ int get_recordings_for_quota_enforcement(const char *stream_name,
  * Get orphaned recording entries (DB entries without files on disk)
  * Protected recordings are excluded (never considered orphaned).
  *
+ * Uses a two-phase approach to avoid holding db_mutex during filesystem I/O:
+ *   Phase 1: Under lock — get total count + fetch a limited batch of candidates
+ *   Phase 2: Without lock — check access() on each candidate path
+ *
  * @param recordings Array to fill with recording metadata
  * @param max_count Maximum number of recordings to return
- * @param total_checked If non-NULL, receives the total number of recordings checked.
- *                      The caller can use this together with the return value to
- *                      compute an orphan ratio for safety thresholding.
+ * @param total_checked If non-NULL, receives the total number of unprotected
+ *                      complete recordings in the database.  The caller can
+ *                      use this together with the return value to compute an
+ *                      orphan ratio for safety thresholding.
  * @return Number of orphaned recordings found, or -1 on error
  */
 int get_orphaned_db_entries(recording_metadata_t *recordings, int max_count,
@@ -1669,7 +1674,6 @@ int get_orphaned_db_entries(recording_metadata_t *recordings, int max_count,
     int rc;
     sqlite3_stmt *stmt;
     int count = 0;
-    int checked = 0;
 
     sqlite3 *db = get_db_handle();
     pthread_mutex_t *db_mutex = get_db_mutex();
@@ -1684,87 +1688,124 @@ int get_orphaned_db_entries(recording_metadata_t *recordings, int max_count,
         return -1;
     }
 
+    // Phase 1a: Get total count of eligible recordings (fast, index-only)
+    int total_count = 0;
     pthread_mutex_lock(db_mutex);
 
-    // Get all unprotected complete recordings and check if files exist.
-    // Protected recordings are never considered orphaned — they must be
-    // explicitly unprotected before any automatic cleanup can touch them.
+    const char *count_sql =
+        "SELECT COUNT(*) FROM recordings "
+        "WHERE is_complete = 1 AND protected = 0;";
+
+    rc = sqlite3_prepare_v2(db, count_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        log_error("Failed to prepare orphan count query: %s", sqlite3_errmsg(db));
+        pthread_mutex_unlock(db_mutex);
+        return -1;
+    }
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        total_count = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+
+    if (total_checked) {
+        *total_checked = total_count;
+    }
+
+    if (total_count == 0) {
+        pthread_mutex_unlock(db_mutex);
+        return 0;
+    }
+
+    // Phase 1b: Fetch a limited batch of candidates (oldest first)
+    // We fetch up to max_count candidates and will check them for orphans.
     const char *sql =
         "SELECT id, stream_name, file_path, start_time, end_time, "
         "size_bytes, width, height, fps, codec, is_complete, trigger_type "
         "FROM recordings "
         "WHERE is_complete = 1 "
         "AND protected = 0 "
-        "ORDER BY start_time ASC;";
+        "ORDER BY start_time ASC "
+        "LIMIT ?;";
 
     rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        log_error("Failed to prepare statement: %s", sqlite3_errmsg(db));
+        log_error("Failed to prepare orphan candidate query: %s", sqlite3_errmsg(db));
         pthread_mutex_unlock(db_mutex);
         return -1;
     }
 
-    // Keep iterating all rows even after max_count orphans are found so that
-    // 'checked' reflects the true total — the caller needs this for ratio checks.
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        checked++;
-        const char *path = (const char *)sqlite3_column_text(stmt, 2);
+    sqlite3_bind_int(stmt, 1, max_count);
 
-        // Check if file exists
-        if (path && count < max_count && access(path, F_OK) != 0) {
-            // File doesn't exist - this is an orphaned entry
-            recordings[count].id = (uint64_t)sqlite3_column_int64(stmt, 0);
+    // Read all candidates into the output buffer (reuse it as scratch space)
+    int candidates = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && candidates < max_count) {
+        recordings[candidates].id = (uint64_t)sqlite3_column_int64(stmt, 0);
 
-            const char *stream = (const char *)sqlite3_column_text(stmt, 1);
-            if (stream) {
-                safe_strcpy(recordings[count].stream_name, stream, sizeof(recordings[count].stream_name), 0);
-            } else {
-                recordings[count].stream_name[0] = '\0';
-            }
-
-            safe_strcpy(recordings[count].file_path, path, sizeof(recordings[count].file_path), 0);
-
-            recordings[count].start_time = (time_t)sqlite3_column_int64(stmt, 3);
-
-            if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
-                recordings[count].end_time = (time_t)sqlite3_column_int64(stmt, 4);
-            } else {
-                recordings[count].end_time = 0;
-            }
-
-            recordings[count].size_bytes = (uint64_t)sqlite3_column_int64(stmt, 5);
-            recordings[count].width = sqlite3_column_int(stmt, 6);
-            recordings[count].height = sqlite3_column_int(stmt, 7);
-            recordings[count].fps = sqlite3_column_int(stmt, 8);
-
-            const char *codec = (const char *)sqlite3_column_text(stmt, 9);
-            if (codec) {
-                safe_strcpy(recordings[count].codec, codec, sizeof(recordings[count].codec), 0);
-            } else {
-                recordings[count].codec[0] = '\0';
-            }
-
-            recordings[count].is_complete = sqlite3_column_int(stmt, 10) != 0;
-
-            const char *trigger_type = (const char *)sqlite3_column_text(stmt, 11);
-            if (trigger_type) {
-                safe_strcpy(recordings[count].trigger_type, trigger_type, sizeof(recordings[count].trigger_type), 0);
-            } else {
-                safe_strcpy(recordings[count].trigger_type, "scheduled", sizeof(recordings[count].trigger_type), 0);
-            }
-
-            count++;
+        const char *stream = (const char *)sqlite3_column_text(stmt, 1);
+        if (stream) {
+            safe_strcpy(recordings[candidates].stream_name, stream, sizeof(recordings[candidates].stream_name), 0);
+        } else {
+            recordings[candidates].stream_name[0] = '\0';
         }
+
+        const char *path = (const char *)sqlite3_column_text(stmt, 2);
+        if (path) {
+            safe_strcpy(recordings[candidates].file_path, path, sizeof(recordings[candidates].file_path), 0);
+        } else {
+            recordings[candidates].file_path[0] = '\0';
+        }
+
+        recordings[candidates].start_time = (time_t)sqlite3_column_int64(stmt, 3);
+
+        if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
+            recordings[candidates].end_time = (time_t)sqlite3_column_int64(stmt, 4);
+        } else {
+            recordings[candidates].end_time = 0;
+        }
+
+        recordings[candidates].size_bytes = (uint64_t)sqlite3_column_int64(stmt, 5);
+        recordings[candidates].width = sqlite3_column_int(stmt, 6);
+        recordings[candidates].height = sqlite3_column_int(stmt, 7);
+        recordings[candidates].fps = sqlite3_column_int(stmt, 8);
+
+        const char *codec = (const char *)sqlite3_column_text(stmt, 9);
+        if (codec) {
+            safe_strcpy(recordings[candidates].codec, codec, sizeof(recordings[candidates].codec), 0);
+        } else {
+            recordings[candidates].codec[0] = '\0';
+        }
+
+        recordings[candidates].is_complete = sqlite3_column_int(stmt, 10) != 0;
+
+        const char *trigger_type = (const char *)sqlite3_column_text(stmt, 11);
+        if (trigger_type) {
+            safe_strcpy(recordings[candidates].trigger_type, trigger_type, sizeof(recordings[candidates].trigger_type), 0);
+        } else {
+            safe_strcpy(recordings[candidates].trigger_type, "scheduled", sizeof(recordings[candidates].trigger_type), 0);
+        }
+
+        candidates++;
     }
 
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(db_mutex);
+    // --- db_mutex released: filesystem I/O below does not block DB writers ---
 
-    if (total_checked) {
-        *total_checked = checked;
+    // Phase 2: Check which candidates are orphaned (file missing on disk)
+    // Compact orphaned entries to the front of the recordings array.
+    for (int i = 0; i < candidates; i++) {
+        if (recordings[i].file_path[0] != '\0' &&
+            access(recordings[i].file_path, F_OK) != 0) {
+            // File doesn't exist — orphaned entry
+            if (count != i) {
+                recordings[count] = recordings[i];
+            }
+            count++;
+        }
     }
 
-    log_info("Checked %d recordings, found %d orphaned DB entries", checked, count);
+    log_info("Orphan check: %d candidates checked, %d orphaned (total recordings: %d)",
+             candidates, count, total_count);
     return count;
 }
 
