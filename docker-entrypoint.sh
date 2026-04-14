@@ -214,15 +214,33 @@ EOF
     fi
     
     # Ensure proper permissions (may fail on NFS, which is okay)
-    log_info "Setting permissions..."
-    CURRENT_UID="$(id -u)"
-    CURRENT_GID="$(id -g)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /var/lib/lightnvr 2>/dev/null || log_warn "Could not set ownership on /var/lib/lightnvr (may be on NFS)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /etc/lightnvr 2>/dev/null || log_warn "Could not set ownership on /etc/lightnvr (may be on NFS)"
-    chown -R "${CURRENT_UID}:${CURRENT_GID}" /var/log/lightnvr 2>/dev/null || log_warn "Could not set ownership on /var/log/lightnvr"
-    chmod -R 755 /var/lib/lightnvr 2>/dev/null || log_warn "Could not set permissions on /var/lib/lightnvr (may be on NFS)"
-    chmod -R 755 /etc/lightnvr 2>/dev/null || log_warn "Could not set permissions on /etc/lightnvr (may be on NFS)"
-    chmod -R 755 /var/log/lightnvr 2>/dev/null || log_warn "Could not set permissions on /var/log/lightnvr"
+    # Skip entirely if the user opts out via environment variable
+    if [ "${SKIP_PERMISSIONS_CHECK:-false}" = "true" ]; then
+        log_info "Skipping permissions check (SKIP_PERMISSIONS_CHECK=true)"
+    else
+        log_info "Setting permissions..."
+        CURRENT_UID="$(id -u)"
+        CURRENT_GID="$(id -g)"
+
+        # Recursive chown/chmod on small directories only (config, logs, database, models)
+        for dir in /etc/lightnvr /var/log/lightnvr \
+                   /var/lib/lightnvr/data/database /var/lib/lightnvr/data/models; do
+            [ -d "$dir" ] || continue
+            chown -R "${CURRENT_UID}:${CURRENT_GID}" "$dir" 2>/dev/null || log_warn "Could not set ownership on $dir (may be on NFS)"
+            chmod -R 755 "$dir" 2>/dev/null || log_warn "Could not set permissions on $dir (may be on NFS)"
+        done
+
+        # For data directories that may contain hundreds of thousands of recording
+        # files, only fix the directory itself (non-recursive) to avoid an O(n)
+        # walk that can block startup for hours on large deployments (see #368).
+        for dir in /var/lib/lightnvr /var/lib/lightnvr/data \
+                   /var/lib/lightnvr/data/recordings /var/lib/lightnvr/data/recordings/mp4 \
+                   /var/lib/lightnvr/www; do
+            [ -d "$dir" ] || continue
+            chown "${CURRENT_UID}:${CURRENT_GID}" "$dir" 2>/dev/null || true
+            chmod 755 "$dir" 2>/dev/null || true
+        done
+    fi
 
     # Test write permissions on critical directories
     log_info "Testing write permissions..."
