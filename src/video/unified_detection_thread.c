@@ -562,20 +562,28 @@ static int start_onvif_detection_thread(unified_detection_ctx_t *ctx) {
 
 /**
  * Signal the ONVIF detection thread to stop and join it.
- * Safe to call when the thread was never started (onvif_thread_running == 0).
+ * Safe to call when the thread was never started (onvif_thread_running == 0)
+ * or when another concurrent caller already claimed shutdown.
  * Blocks for at most CURLOPT_TIMEOUT + small overhead (≤ ~12 s).
+ *
+ * Uses atomic_compare_exchange_strong to transition onvif_thread_running
+ * from 1 → 0 in a single atomic step.  Only the caller that wins the
+ * exchange performs pthread_join(); all other concurrent callers return
+ * immediately, preventing undefined behaviour from multiple joins on the
+ * same thread handle.
  */
 static void stop_onvif_detection_thread(unified_detection_ctx_t *ctx) {
-    if (!atomic_load(&ctx->onvif_thread_running)) {
-        return; /* never started or already stopped */
+    int expected = 1;
+    if (!atomic_compare_exchange_strong(&ctx->onvif_thread_running, &expected, 0)) {
+        return; /* never started, already stopped, or another caller will join */
     }
 
-    log_info("[%s] Requesting ONVIF detection thread to stop…", ctx->stream_name);
-    atomic_store(&ctx->onvif_thread_running, 0);
+    log_info("[%s] Requesting ONVIF detection thread to stop", ctx->stream_name);
 
     /* pthread_join blocks until the current detect_motion_onvif() call
      * completes (max CURLOPT_TIMEOUT = 10 s + subscription overhead ≈ 12 s).
-     * Acceptable because this path is only reached during UDT teardown. */
+     * Acceptable because this path is only reached during UDT teardown.
+     * The compare-exchange above guarantees only one caller joins. */
     pthread_join(ctx->onvif_thread, NULL);
     log_info("[%s] ONVIF detection thread joined", ctx->stream_name);
 }
