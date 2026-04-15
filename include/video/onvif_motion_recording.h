@@ -131,7 +131,7 @@ int disable_motion_recording(const char *stream_name);
  * @param timestamp Event timestamp
  * @return 0 on success, non-zero on failure
  */
-int process_motion_event(const char *stream_name, bool motion_detected, time_t timestamp);
+int process_motion_event(const char *stream_name, bool motion_detected, time_t timestamp, bool is_propagated);
 
 /**
  * Get recording state for a stream
