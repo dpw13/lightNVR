@@ -84,6 +84,9 @@
 
 // Detection recording settings
 #define DEFAULT_MIN_DETECTION_RECORDING_DURATION 10  // Default minimum total duration (seconds) for detection recordings (pre_buffer + post_buffer)
+#define ONVIF_MOTION_HOLD_SECS 15  // Seconds to hold onvif_motion_detected=1 after last confirmed motion event,
+                                   // preventing a shared-subscription race where the sibling thread clears the
+                                   // flag before the UDT reads it (must be > detection_interval, currently 10s)
 
 // Motion detection settings
 static const float DEFAULT_MOTION_SENSITIVITY = 0.15f;  // Fallback sensitivity if threshold is unset or out of range
@@ -505,7 +508,6 @@ static void *onvif_detection_thread_func(void *arg) {
              * This guarantees the UDT sees flag==1 on its next 10 s tick even
              * if our very next PullMessages comes back empty.  Only after the
              * hold window expires do we declare the scene idle. */
-            #define ONVIF_MOTION_HOLD_SECS 15
             long long last_ts = atomic_load(&ctx->onvif_motion_timestamp);
             if (last_ts == 0LL ||
                 (long long)time(NULL) - last_ts >= ONVIF_MOTION_HOLD_SECS) {
