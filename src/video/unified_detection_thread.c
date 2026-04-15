@@ -1610,8 +1610,9 @@ stats_done:
                           ctx->stream_name, replay_lag);
             }
         }
-    } else if (!is_video && ctx->first_video_pts_set) {
-        // Non-video (audio): buffer only once video has gone live
+    } else if (!is_video && ctx->stream_is_live) {
+        // Non-video (audio): buffer only after the first live keyframe has
+        // marked the stream as live, so replay audio is not added on its own.
         should_buffer = true;
     }
 
