@@ -813,7 +813,7 @@ int disable_motion_recording(const char *stream_name) {
 /**
  * Process a motion event
  */
-int process_motion_event(const char *stream_name, bool motion_detected, time_t timestamp) {
+int process_motion_event(const char *stream_name, bool motion_detected, time_t timestamp, bool is_propagated) {
     if (!stream_name) {
         return -1;
     }
@@ -860,7 +860,9 @@ int process_motion_event(const char *stream_name, bool motion_detected, time_t t
     // target stream silently ignores the call.
 
     // Only propagate if this event was not itself already a propagated copy.
-    if (event.is_propagated) {
+    // is_propagated is passed explicitly by the caller; the local event struct
+    // is always zero-initialised and cannot carry this flag reliably.
+    if (is_propagated) {
         return 0;
     }
 
