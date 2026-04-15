@@ -1553,9 +1553,15 @@ stats_done:
     bool should_buffer = false;
     if (is_video && ctx->input_ctx && ctx->video_stream_idx >= 0) {
         if (!ctx->first_video_pts_set) {
-            // First video packet — record PTS reference, still assume replay
+            // First video packet — record the PTS reference used for replay
+            // lag calculations. If the stream is already known to be live,
+            // allow an initial keyframe to enter the pre-buffer immediately so
+            // we do not lose the first GOP window.
             ctx->first_video_pts = pkt->pts;
             ctx->first_video_pts_set = true;
+            if (ctx->stream_is_live && is_keyframe) {
+                should_buffer = true;
+            }
         } else {
             // Determine replay lag.
             // If PTS is valid use PTS-vs-wallclock for accuracy.
